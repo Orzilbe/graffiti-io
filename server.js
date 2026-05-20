@@ -8,11 +8,12 @@ const httpServer = http.createServer(app);
 const io = new Server(httpServer, { cors: { origin: '*' } });
 
 app.use(express.static(path.join(__dirname, 'public')));
+app.get('/', (_, res) => res.redirect('/display'));
 app.get('/display', (_, res) => res.sendFile(path.join(__dirname, 'public/display.html')));
 app.get('/controller/:id', (_, res) => res.sendFile(path.join(__dirname, 'public/controller.html')));
 
 // ── Constants ────────────────────────────────────────────────────────────
-const PORT     = 3000;
+const PORT     = process.env.PORT || 3000;
 const GW       = 100;               // grid width  (cells)
 const GH       = 60;                // grid height (cells)
 const TICK_MS  = 50;                // 20 ticks/sec
