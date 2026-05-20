@@ -55,15 +55,39 @@
       height: auto;
       filter: drop-shadow(0 0 28px rgba(0,229,255,.45));
     }
-    #player-slots { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    #lobby { gap:18px; }
+    #lobby-logo { width:min(320px,60vw); }
+    #player-slots { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+
+    /* ── Player slot cards ── */
     .slot {
-      padding:14px 20px; border-radius:12px; border:2px solid #2a2a2a;
-      text-align:center; min-width:175px; transition:border-color .3s, box-shadow .3s;
+      display:flex; flex-direction:column; align-items:center; gap:8px;
+      padding:12px 14px; border-radius:14px; border:2px solid #2a2a2a;
+      text-align:center; transition:border-color .3s, box-shadow .3s;
     }
-    .slot.connected { border-color:var(--c); box-shadow:0 0 14px var(--c); }
-    .slot-label { font-family:'Permanent Marker',cursive; font-size:1.15rem; }
-    .slot-url   { font-size:.7rem; color:#666; margin-top:5px; word-break:break-all; }
-    .slot-name  { font-family:'Boogaloo',sans-serif; font-size:1rem; margin-top:6px; color:#ccc; }
+    .slot.connected { border-color:var(--c); box-shadow:0 0 16px var(--c); }
+    .slot-label { font-family:'Permanent Marker',cursive; font-size:1.05rem; }
+
+    /* ── QR code wrapper ── */
+    .qr-wrap {
+      position:relative; border-radius:8px; overflow:hidden;
+      border:3px solid var(--c); background:#fff; flex-shrink:0;
+    }
+    .qr-wrap canvas, .qr-wrap img { display:block; }
+
+    /* ── Connected overlay shown on top of QR ── */
+    .qr-overlay {
+      position:absolute; inset:0;
+      background:rgba(0,0,0,.88);
+      display:flex; flex-direction:column;
+      align-items:center; justify-content:center; gap:4px;
+    }
+    .qr-overlay.hidden { display:none; }
+    .qr-check { font-size:2.6rem; line-height:1; }
+    .qr-pname {
+      font-family:'Permanent Marker',cursive; font-size:.85rem;
+      color:#fff; max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    }
     #start-btn {
       font-family:'Permanent Marker',cursive; font-size:1.5rem;
       padding:14px 44px; border:none; border-radius:12px; cursor:pointer;
@@ -97,7 +121,53 @@
 
       <div id="lobby">
         <img src="/mixMaster.png" id="lobby-logo" alt="Mix Master" />
-        <div id="player-slots"></div>
+        <div id="player-slots">
+
+          <div class="slot" id="slot-0" style="--c:#FF2D78">
+            <div class="slot-label" style="color:#FF2D78">PLAYER 1</div>
+            <div class="qr-wrap">
+              <div id="qr-0"></div>
+              <div class="qr-overlay hidden" id="overlay-0">
+                <div class="qr-check">✓</div>
+                <div class="qr-pname" id="name-0"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="slot" id="slot-1" style="--c:#00E5FF">
+            <div class="slot-label" style="color:#00E5FF">PLAYER 2</div>
+            <div class="qr-wrap">
+              <div id="qr-1"></div>
+              <div class="qr-overlay hidden" id="overlay-1">
+                <div class="qr-check">✓</div>
+                <div class="qr-pname" id="name-1"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="slot" id="slot-2" style="--c:#76FF03">
+            <div class="slot-label" style="color:#76FF03">PLAYER 3</div>
+            <div class="qr-wrap">
+              <div id="qr-2"></div>
+              <div class="qr-overlay hidden" id="overlay-2">
+                <div class="qr-check">✓</div>
+                <div class="qr-pname" id="name-2"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="slot" id="slot-3" style="--c:#FF6D00">
+            <div class="slot-label" style="color:#FF6D00">PLAYER 4</div>
+            <div class="qr-wrap">
+              <div id="qr-3"></div>
+              <div class="qr-overlay hidden" id="overlay-3">
+                <div class="qr-check">✓</div>
+                <div class="qr-pname" id="name-3"></div>
+              </div>
+            </div>
+          </div>
+
+        </div>
         <button id="start-btn">START GAME</button>
       </div>
 
@@ -115,6 +185,7 @@
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <script src="/game.js"></script>
 </body>
 </html>

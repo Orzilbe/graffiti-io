@@ -12,11 +12,9 @@ const lbTitle = document.getElementById('sidebar-title');
 
 const COLORS = ['#FF2D78', '#00E5FF', '#76FF03', '#FF6D00'];
 const RGB    = COLORS.map(h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)]);
-const BASE   = `${location.protocol}//${location.hostname}:${location.port || 3000}`;
 
 // ── State ──────────────────────────────────────────────────────────────────
 let gs        = { running:false, players:[], territory:[], trailGrid:[], gridW:100, gridH:60, timeLeft:0 };
-let slots     = {};
 let brickBg   = null;
 let particles = [];      // death splatter
 let drips     = [];      // territory edge drips (recomputed at 20fps)
@@ -27,6 +25,21 @@ const trailOff = document.createElement('canvas');
 terrOff.width = trailOff.width = 100;
 terrOff.height = trailOff.height = 60;
 
+// ── QR codes — generated once on page load ────────────────────────────────
+async function initQRCodes() {
+  try {
+    const urls = await fetch('/qrcodes').then(r => r.json());
+    for (let i = 0; i < 4; i++) {
+      new QRCode(document.getElementById(`qr-${i}`), {
+        text: urls[i], width: 180, height: 180,
+        colorDark: '#111', colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.H,
+      });
+    }
+  } catch (e) { console.error('[QR] init failed:', e); }
+}
+initQRCodes();
+
 // ── Socket events ──────────────────────────────────────────────────────────
 socket.emit('display-join');
 
@@ -36,8 +49,16 @@ socket.on('game-state', s => {
   computeDrips();
 });
 
-socket.on('player-joined', ({ slotId, name, color }) => { slots[slotId] = { name, color }; renderLobby(); });
-socket.on('player-left',   ({ slotId })              => { delete slots[slotId];             renderLobby(); });
+socket.on('player-joined', ({ slotId, name }) => {
+  document.getElementById(`slot-${slotId}`).classList.add('connected');
+  document.getElementById(`overlay-${slotId}`).classList.remove('hidden');
+  document.getElementById(`name-${slotId}`).textContent = name;
+});
+socket.on('player-left', ({ slotId }) => {
+  document.getElementById(`slot-${slotId}`).classList.remove('connected');
+  document.getElementById(`overlay-${slotId}`).classList.add('hidden');
+  document.getElementById(`name-${slotId}`).textContent = '';
+});
 socket.on('leaderboard-update', board => updateLeaderboard(board));
 
 socket.on('game-start', () => {
@@ -60,19 +81,6 @@ socket.on('game-end', ({ winner, scores }) => {
 });
 
 document.getElementById('start-btn').addEventListener('click', () => socket.emit('game-start'));
-
-// ── Lobby ──────────────────────────────────────────────────────────────────
-function renderLobby() {
-  document.getElementById('player-slots').innerHTML = [0,1,2,3].map(i => {
-    const s = slots[i], c = COLORS[i];
-    return `<div class="slot ${s ? 'connected' : ''}" style="--c:${c}">
-      <div class="slot-label" style="color:${c}">PLAYER ${i+1}</div>
-      <div class="slot-url">${BASE}/controller/${i}</div>
-      <div class="slot-name">${s ? s.name + ' ✓' : 'waiting…'}</div>
-    </div>`;
-  }).join('');
-}
-renderLobby();
 
 // ── Leaderboard — FLIP rank-slide animation ────────────────────────────────
 function updateLeaderboard(board) {

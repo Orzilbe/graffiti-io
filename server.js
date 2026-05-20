@@ -12,6 +12,13 @@ app.get('/', (_, res) => res.redirect('/display'));
 app.get('/display', (_, res) => res.sendFile(path.join(__dirname, 'public/display.html')));
 app.get('/controller/:id', (_, res) => res.sendFile(path.join(__dirname, 'public/controller.html')));
 
+// Returns controller URLs built from the actual request host (works on localhost + Render)
+app.get('/qrcodes', (req, res) => {
+  const base = `${req.protocol}://${req.get('host')}`;
+  res.json({ 0: `${base}/controller/0`, 1: `${base}/controller/1`,
+             2: `${base}/controller/2`, 3: `${base}/controller/3` });
+});
+
 // ── Constants ────────────────────────────────────────────────────────────
 const PORT     = process.env.PORT || 3000;
 const GW       = 100;               // grid width  (cells)
