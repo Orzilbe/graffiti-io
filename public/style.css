@@ -1,0 +1,23 @@
+@import url('https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Boogaloo&display=swap');
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #1a1a1a;
+  color: #fff;
+  font-family: 'Boogaloo', sans-serif;
+}
+
+canvas {
+  display: block;
+}
+
+/* Utility */
+.hidden { display: none !important; }

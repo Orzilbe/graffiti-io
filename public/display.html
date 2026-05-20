@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mix Master — Display</title>
+  <link rel="stylesheet" href="/style.css" />
+  <style>
+    #app { display:flex; width:100vw; height:100vh; }
+
+    /* ── Canvas area ── */
+    #canvas-wrap { flex:1; position:relative; overflow:hidden; }
+    #game-canvas  { display:block; width:100%; height:100%; }
+
+    #timer {
+      position:absolute; top:14px; left:50%; transform:translateX(-50%);
+      font-family:'Permanent Marker',cursive; font-size:2.2rem; color:#fff;
+      background:rgba(0,0,0,0.55); padding:4px 22px; border-radius:10px;
+      text-shadow:0 0 14px rgba(255,255,255,0.7); display:none; z-index:5;
+    }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width:280px; flex-shrink:0; background:rgba(0,0,0,0.82);
+      border-left:3px solid #FF2D78; padding:18px 12px;
+      display:flex; flex-direction:column; gap:10px; transition:border-color .4s;
+    }
+    #sidebar-title {
+      font-family:'Permanent Marker',cursive; font-size:1.55rem;
+      text-align:center; color:#FF2D78; text-shadow:0 0 14px #FF2D78;
+      line-height:1.25; letter-spacing:1px;
+    }
+    #leaderboard { display:flex; flex-direction:column; gap:7px; overflow:visible; }
+    .lb-row {
+      display:flex; align-items:center; gap:8px;
+      padding:9px 10px; border-radius:9px;
+      background:rgba(255,255,255,0.05); font-size:.95rem;
+      will-change:transform;
+    }
+    .lb-row.gold { background:rgba(255,215,0,.12); box-shadow:0 0 8px rgba(255,215,0,.3); }
+    .lb-rank  { font-family:'Permanent Marker',cursive; font-size:1.15rem; min-width:22px; text-align:center; }
+    .lb-swatch{ width:16px; height:16px; border-radius:4px; flex-shrink:0; }
+    .lb-name  { flex:1; font-family:'Boogaloo',sans-serif; }
+    .lb-pct   { font-family:'Permanent Marker',cursive; font-size:1rem; }
+
+    /* ── Lobby overlay ── */
+    #lobby {
+      position:absolute; inset:0; z-index:10;
+      background:rgba(14,14,14,.94);
+      display:flex; flex-direction:column;
+      align-items:center; justify-content:center; gap:28px;
+    }
+    #lobby-logo {
+      width: min(420px, 80vw);
+      height: auto;
+      filter: drop-shadow(0 0 28px rgba(0,229,255,.45));
+    }
+    #player-slots { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    .slot {
+      padding:14px 20px; border-radius:12px; border:2px solid #2a2a2a;
+      text-align:center; min-width:175px; transition:border-color .3s, box-shadow .3s;
+    }
+    .slot.connected { border-color:var(--c); box-shadow:0 0 14px var(--c); }
+    .slot-label { font-family:'Permanent Marker',cursive; font-size:1.15rem; }
+    .slot-url   { font-size:.7rem; color:#666; margin-top:5px; word-break:break-all; }
+    .slot-name  { font-family:'Boogaloo',sans-serif; font-size:1rem; margin-top:6px; color:#ccc; }
+    #start-btn {
+      font-family:'Permanent Marker',cursive; font-size:1.5rem;
+      padding:14px 44px; border:none; border-radius:12px; cursor:pointer;
+      background:#FF2D78; color:#fff; text-shadow:0 2px 4px rgba(0,0,0,.4);
+      box-shadow:0 0 22px rgba(255,45,120,.5); transition:transform .12s, box-shadow .12s;
+    }
+    #start-btn:hover  { transform:scale(1.06); box-shadow:0 0 32px rgba(255,45,120,.75); }
+    #start-btn:active { transform:scale(.97); }
+
+    /* ── Game-over overlay ── */
+    #gameover {
+      position:absolute; inset:0; z-index:10;
+      background:rgba(8,8,8,.92); display:none;
+      flex-direction:column; align-items:center; justify-content:center; gap:18px;
+    }
+    #gameover h1   { font-family:'Permanent Marker',cursive; font-size:3.6rem; color:#FF6D00; text-shadow:0 0 20px #FF6D00; }
+    #winner-line   { font-family:'Boogaloo',sans-serif; font-size:2rem; }
+    #final-scores  { display:flex; flex-direction:column; gap:8px; min-width:260px; }
+    .score-row {
+      display:flex; justify-content:space-between; align-items:center;
+      padding:8px 14px; border-radius:8px; background:rgba(255,255,255,.07);
+      font-family:'Boogaloo',sans-serif; font-size:1.1rem;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="canvas-wrap">
+      <canvas id="game-canvas"></canvas>
+      <div id="timer">3:00</div>
+
+      <div id="lobby">
+        <img src="/mixMaster.png" id="lobby-logo" alt="Mix Master" />
+        <div id="player-slots"></div>
+        <button id="start-btn">START GAME</button>
+      </div>
+
+      <div id="gameover">
+        <h1>GAME OVER</h1>
+        <div id="winner-line"></div>
+        <div id="final-scores"></div>
+      </div>
+    </div>
+
+    <div id="sidebar">
+      <div id="sidebar-title">KINGS OF<br>THE WALL</div>
+      <div id="leaderboard"></div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/game.js"></script>
+</body>
+</html>
