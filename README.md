@@ -24,7 +24,7 @@
 
 - **Node.js** v18 or higher ([download here](https://nodejs.org))
 - A modern browser (Chrome, Firefox, Safari, Edge)
-- A local network so phones can reach your computer — or use ngrok/Railway for remote play (see Section 4)
+- A local network so phones can reach your computer — or use Render/ngrok for remote play (see Section 4)
 
 ### Installation
 
@@ -86,36 +86,49 @@ The leaderboard on the right shows live rankings. The #1 player gets a crown �
 
 > Use one of these options so players can join from anywhere — not just your local network.
 
-### Option A — Railway *(easiest, free)*
+### Option A — Render *(free)*
 
-Railway gives you a public HTTPS URL in minutes.
+1. Create a free account at [render.com](https://render.com)
 
-1. Push your project to a GitHub repository
-2. Go to [railway.app](https://railway.app) and sign in with GitHub
-3. Click **New Project → Deploy from GitHub repo** and select your repo
-4. In the project settings, set the **Start Command** to: `node server.js`
-5. Railway will build and deploy automatically — copy the public URL it gives you
-6. Share that URL with players, replacing `localhost:3000` with your Railway domain
+2. Push your project to GitHub (if not already):
+   - Create a new repo at [github.com](https://github.com/new)
+   - Run in your terminal:
+     ```bash
+     git init
+     git add .
+     git commit -m "first commit"
+     git branch -M main
+     git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
+     git push -u origin main
+     ```
 
-> ✅ Recommended for a party or event — stable, always-on, free for small projects.
+3. Go to [render.com](https://render.com) → **New** → **Web Service**
+
+4. Connect your GitHub repo
+
+5. Fill in the settings:
+   - **Name**: `mix-master` (or any name you like)
+   - **Build Command**: `npm install`
+   - **Start Command**: `node server.js`
+   - **Instance Type**: Free
+
+6. Click **Create Web Service** — Render will build and deploy automatically
+
+7. You'll get a public URL like `https://mix-master.onrender.com`
+
+8. Share these URLs with players:
+   - Main screen: `https://mix-master.onrender.com/display`
+   - Player 1 phone: `https://mix-master.onrender.com/controller/0`
+   - Player 2 phone: `https://mix-master.onrender.com/controller/1`
+   - Player 3 phone: `https://mix-master.onrender.com/controller/2`
+   - Player 4 phone: `https://mix-master.onrender.com/controller/3`
+
+> ⚠️ **Note:** Free tier goes to sleep after 15 minutes of inactivity.
+> The first load may take ~30 seconds to wake up. After that it runs normally.
 
 ---
 
-### Option B — Render *(free tier)*
-
-1. Push your project to a GitHub repository
-2. Go to [render.com](https://render.com) → **New → Web Service**
-3. Connect your GitHub repo
-4. Set **Build Command** to: `npm install`
-5. Set **Start Command** to: `node server.js`
-6. Click **Deploy** and wait for the build to finish
-7. Render gives you a `.onrender.com` URL — share it with players
-
-> ⚠️ **Note:** Render's free tier spins the server down after 15 minutes of inactivity. The first connection after sleep can take 30–60 seconds. For a live game session, wake it up by visiting the URL yourself first.
-
----
-
-### Option C — ngrok *(fastest for local play with friends)*
+### Option B — ngrok *(fastest for local play with friends)*
 
 ngrok creates a temporary public tunnel to your local server. No deployment needed.
 
