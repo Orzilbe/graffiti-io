@@ -71,10 +71,11 @@ function shiftHue(hex, deg) {
   return hslToHex((h + deg) % 360, s, l);
 }
 
-// Pick avatar color, falling back to slot color; hue-shift if another player already has it
-function pickColor(avatarConfig, slotId) {
+// Use the player's chosen color; fall back to slot color only if none provided.
+// Hue-shifts if another lobby player already has the exact same color.
+function pickColor(wantedColor, slotId) {
   const usedColors = new Set([...lobbyPlayers.values()].map(p => p.color));
-  let color = avatarConfig?.color || COLORS[slotId];
+  let color = wantedColor || COLORS[slotId];
   if (usedColors.has(color)) color = shiftHue(color, 40);
   return color;
 }
@@ -316,8 +317,8 @@ function promoteFromQueue() {
     const sock = io.sockets.sockets.get(pd.socketId);
     if (!sock || !sock.connected) continue; // disconnected while waiting
 
-    const color = pickColor(pd.avatarConfig, slotId);
-    console.log(`[queue] promoted ${pd.username} → slot=${slotId} avatarColor=${pd.avatarConfig?.color} → assigned=${color}`);
+    const color = pickColor(pd.wantedColor, slotId);
+    console.log(`[queue] promoted ${pd.username} → slot=${slotId} wantedColor=${pd.wantedColor} → assigned=${color}`);
     controllers.set(slotId, sock.id);
     sock.data = { slotId, name: pd.username, userId: pd.userId,
                   avatarUrl: pd.avatarUrl, avatarConfig: pd.avatarConfig, color };
@@ -360,13 +361,15 @@ io.on('connection', socket => {
   });
 
   // ── Platform lobby join (new flow) ────────────────────────────────────────
-  socket.on('lobby-join', ({ userId, username, avatarUrl, avatarConfig }) => {
+  socket.on('lobby-join', ({ userId, username, avatarUrl, avatarConfig, color: clientColor }) => {
     const cfg = avatarConfig ?? null;
+    // color sent explicitly by client → avatarConfig.color → slot fallback
+    const wantedColor = clientColor || cfg?.color;
 
     // If game is running → queue for next round and notify client
     if (gameRunning) {
       if (!waitingQueue.find(p => p.socketId === socket.id)) {
-        waitingQueue.push({ socketId: socket.id, userId, username, avatarUrl, avatarConfig: cfg });
+        waitingQueue.push({ socketId: socket.id, userId, username, avatarUrl, avatarConfig: cfg, wantedColor });
         socket.data = { name: username, userId, avatarUrl, avatarConfig: cfg, inQueue: true };
       }
       socket.emit('game-in-progress');
@@ -380,9 +383,9 @@ io.on('connection', socket => {
     const slotId    = [0, 1, 2, 3].find(i => !usedSlots.has(i));
 
     if (slotId === undefined) {
-      // All slots taken → add to queue (no lobby-full rejection)
+      // All slots taken → add to queue
       if (!waitingQueue.find(p => p.socketId === socket.id)) {
-        waitingQueue.push({ socketId: socket.id, userId, username, avatarUrl, avatarConfig: cfg });
+        waitingQueue.push({ socketId: socket.id, userId, username, avatarUrl, avatarConfig: cfg, wantedColor });
         socket.data = { name: username, userId, avatarUrl, avatarConfig: cfg, inQueue: true };
       }
       const pos = waitingQueue.findIndex(p => p.socketId === socket.id) + 1;
@@ -391,8 +394,8 @@ io.on('connection', socket => {
       return;
     }
 
-    const color = pickColor(cfg, slotId);
-    console.log(`[lobby] slot=${slotId} user=${username} avatarColor=${cfg?.color} → assigned=${color}`);
+    const color = pickColor(wantedColor, slotId);
+    console.log(`[lobby] slot=${slotId} user=${username} clientColor=${clientColor} avatarColor=${cfg?.color} → assigned=${color}`);
     controllers.set(slotId, socket.id);
     socket.data = { slotId, name: username, userId, avatarUrl, avatarConfig: cfg, color };
     lobbyPlayers.set(socket.id, { slotId, userId, username, avatarUrl, avatarConfig: cfg, color });
