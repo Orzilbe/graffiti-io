@@ -42,6 +42,43 @@ const SPAWNS   = [
 const OPP  = { up:'down', down:'up', left:'right', right:'left' };
 const DVEC = { up:[0,-1], down:[0,1], left:[-1,0], right:[1,0] };
 
+// ── Color helpers ─────────────────────────────────────────────────────────────
+function hexToHSL(hex) {
+  const r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
+  const max = Math.max(r,g,b), min = Math.min(r,g,b);
+  let h = 0, s = 0; const l = (max+min)/2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d/(2-max-min) : d/(max+min);
+    switch (max) {
+      case r: h = (g-b)/d + (g < b ? 6 : 0); break;
+      case g: h = (b-r)/d + 2; break;
+      case b: h = (r-g)/d + 4; break;
+    }
+    h /= 6;
+  }
+  return { h: h*360, s: s*100, l: l*100 };
+}
+function hslToHex(h, s, l) {
+  s /= 100; l /= 100;
+  const k = n => (n + h/30) % 12;
+  const a = s * Math.min(l, 1-l);
+  const f = n => l - a * Math.max(-1, Math.min(k(n)-3, Math.min(9-k(n), 1)));
+  return '#' + [0,8,4].map(n => Math.round(f(n)*255).toString(16).padStart(2,'0')).join('');
+}
+function shiftHue(hex, deg) {
+  const { h, s, l } = hexToHSL(hex);
+  return hslToHex((h + deg) % 360, s, l);
+}
+
+// Pick avatar color, falling back to slot color; hue-shift if another player already has it
+function pickColor(avatarConfig, slotId) {
+  const usedColors = new Set([...lobbyPlayers.values()].map(p => p.color));
+  let color = avatarConfig?.color || COLORS[slotId];
+  if (usedColors.has(color)) color = shiftHue(color, 40);
+  return color;
+}
+
 // ── Mutable game state ───────────────────────────────────────────────────────
 const displays     = new Set();
 const controllers  = new Map();    // slotId → socketId
@@ -62,9 +99,9 @@ const ci      = (x, y) => y * GW + x;
 const inB     = (x, y) => x >= 0 && x < GW && y >= 0 && y < GH;
 
 // ── Player helpers ────────────────────────────────────────────────────────────
-function makePlayer(id, name, userId = null) {
+function makePlayer(id, name, userId = null, color = null) {
   const s = SPAWNS[id];
-  return { id, name, color: COLORS[id], x: s.x, y: s.y,
+  return { id, name, color: color || COLORS[id], x: s.x, y: s.y,
            dir: s.dir, pendingDir: s.dir, trail: [],
            alive: true, respawnTimer: 0, terrCount: 0, userId };
 }
@@ -183,10 +220,11 @@ function startGame() {
   players = [0,1,2,3].map(i => {
     const sid  = controllers.get(i);
     if (!sid) return null;
-    const sock = io.sockets.sockets.get(sid);
-    const name = sock?.data?.name   || `P${i+1}`;
+    const sock   = io.sockets.sockets.get(sid);
+    const name   = sock?.data?.name   || `P${i+1}`;
     const userId = sock?.data?.userId || null;
-    return makePlayer(i, name, userId);
+    const color  = sock?.data?.color  || COLORS[i]; // color stored at lobby-join time
+    return makePlayer(i, name, userId, color);
   });
   players.forEach(p => { if (p) giveSpawnZone(p); });
   calcTerritory();
@@ -278,10 +316,11 @@ function promoteFromQueue() {
     const sock = io.sockets.sockets.get(pd.socketId);
     if (!sock || !sock.connected) continue; // disconnected while waiting
 
-    const color = COLORS[slotId];
+    const color = pickColor(pd.avatarConfig, slotId);
+    console.log(`[queue] promoted ${pd.username} → slot=${slotId} avatarColor=${pd.avatarConfig?.color} → assigned=${color}`);
     controllers.set(slotId, sock.id);
     sock.data = { slotId, name: pd.username, userId: pd.userId,
-                  avatarUrl: pd.avatarUrl, avatarConfig: pd.avatarConfig };
+                  avatarUrl: pd.avatarUrl, avatarConfig: pd.avatarConfig, color };
     lobbyPlayers.set(sock.id, { slotId, userId: pd.userId, username: pd.username,
                                 avatarUrl: pd.avatarUrl, avatarConfig: pd.avatarConfig, color });
 
@@ -352,12 +391,11 @@ io.on('connection', socket => {
       return;
     }
 
-    const color = COLORS[slotId];
+    const color = pickColor(cfg, slotId);
+    console.log(`[lobby] slot=${slotId} user=${username} avatarColor=${cfg?.color} → assigned=${color}`);
     controllers.set(slotId, socket.id);
-    socket.data = { slotId, name: username, userId, avatarUrl, avatarConfig: cfg };
+    socket.data = { slotId, name: username, userId, avatarUrl, avatarConfig: cfg, color };
     lobbyPlayers.set(socket.id, { slotId, userId, username, avatarUrl, avatarConfig: cfg, color });
-
-    console.log(`[lobby] slot=${slotId} user=${username}`);
 
     socket.emit('lobby-join-ack', { slotId, color, username, avatarUrl, avatarConfig: cfg });
     io.emit('lobby-update', [...lobbyPlayers.values()]);
