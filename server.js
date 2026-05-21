@@ -45,7 +45,8 @@ const DVEC = { up:[0,-1], down:[0,1], left:[-1,0], right:[1,0] };
 // ── Mutable game state ───────────────────────────────────────────────────────
 const displays     = new Set();
 const controllers  = new Map();    // slotId → socketId
-const lobbyPlayers = new Map();    // socketId → { slotId, userId, username, avatarUrl, color }
+const lobbyPlayers = new Map();    // socketId → { slotId, userId, username, avatarUrl, avatarConfig, color }
+const waitingQueue = [];           // [{ socketId, userId, username, avatarUrl, avatarConfig }]
 
 let territory   = [];
 let trailGrid   = [];
@@ -212,12 +213,13 @@ async function endGame() {
     await postScoresToPlatform(players.filter(Boolean), total);
   }
 
-  // Reset for next round — players must scan again
+  // Reset lobby, then promote queued players into open slots
   setTimeout(() => {
     controllers.clear();
     lobbyPlayers.clear();
     players = [null, null, null, null];
     io.emit('lobby-update', []);
+    promoteFromQueue(); // fills up to 4 slots from queue
     console.log('[lobby] reset for next round');
   }, 8000);
 }
@@ -242,6 +244,43 @@ async function postScoresToPlatform(activePlayers, total) {
   const saved = results.filter(r => r.status === 'fulfilled').length;
   console.log(`[platform] scores posted: ${saved}/${withIds.length}`);
   if (saved > 0) io.to([...displays]).emit('scores-saved', { count: saved });
+}
+
+// ── Queue helpers ─────────────────────────────────────────────────────────────
+
+function broadcastQueuePositions() {
+  waitingQueue.forEach((p, i) => {
+    const sock = io.sockets.sockets.get(p.socketId);
+    if (sock) sock.emit('queue-position', { position: i + 1, totalWaiting: waitingQueue.length });
+  });
+}
+
+function promoteFromQueue() {
+  while (waitingQueue.length > 0) {
+    const usedSlots = new Set(controllers.keys());
+    const slotId    = [0, 1, 2, 3].find(i => !usedSlots.has(i));
+    if (slotId === undefined) break;
+
+    const pd   = waitingQueue.shift();
+    broadcastQueuePositions();
+
+    const sock = io.sockets.sockets.get(pd.socketId);
+    if (!sock || !sock.connected) continue; // disconnected while waiting
+
+    const color = COLORS[slotId];
+    controllers.set(slotId, sock.id);
+    sock.data = { slotId, name: pd.username, userId: pd.userId,
+                  avatarUrl: pd.avatarUrl, avatarConfig: pd.avatarConfig };
+    lobbyPlayers.set(sock.id, { slotId, userId: pd.userId, username: pd.username,
+                                avatarUrl: pd.avatarUrl, avatarConfig: pd.avatarConfig, color });
+
+    sock.emit('promoted-to-player', { slotId, color });
+    io.emit('lobby-update', [...lobbyPlayers.values()]);
+    io.to([...displays]).emit('player-joined', { slotId, name: pd.username, color,
+                                                  avatarUrl: pd.avatarUrl,
+                                                  avatarConfig: pd.avatarConfig });
+    console.log(`[queue] promoted ${pd.username} → slot ${slotId}`);
+  }
 }
 
 // ── Socket events ─────────────────────────────────────────────────────────────
@@ -272,29 +311,46 @@ io.on('connection', socket => {
 
   // ── Platform lobby join (new flow) ────────────────────────────────────────
   socket.on('lobby-join', ({ userId, username, avatarUrl, avatarConfig }) => {
+    const cfg = avatarConfig ?? null;
+
+    // If game is running → queue for next round and notify client
     if (gameRunning) {
+      if (!waitingQueue.find(p => p.socketId === socket.id)) {
+        waitingQueue.push({ socketId: socket.id, userId, username, avatarUrl, avatarConfig: cfg });
+        socket.data = { name: username, userId, avatarUrl, avatarConfig: cfg, inQueue: true };
+      }
       socket.emit('game-in-progress');
+      const pos = waitingQueue.findIndex(p => p.socketId === socket.id) + 1;
+      socket.emit('queue-position', { position: pos, totalWaiting: waitingQueue.length });
       return;
     }
 
     // Find first free slot
     const usedSlots = new Set(controllers.keys());
-    const slotId = [0, 1, 2, 3].find(i => !usedSlots.has(i));
+    const slotId    = [0, 1, 2, 3].find(i => !usedSlots.has(i));
+
     if (slotId === undefined) {
-      socket.emit('lobby-full');
+      // All slots taken → add to queue (no lobby-full rejection)
+      if (!waitingQueue.find(p => p.socketId === socket.id)) {
+        waitingQueue.push({ socketId: socket.id, userId, username, avatarUrl, avatarConfig: cfg });
+        socket.data = { name: username, userId, avatarUrl, avatarConfig: cfg, inQueue: true };
+      }
+      const pos = waitingQueue.findIndex(p => p.socketId === socket.id) + 1;
+      socket.emit('queue-position', { position: pos, totalWaiting: waitingQueue.length });
+      broadcastQueuePositions();
       return;
     }
 
     const color = COLORS[slotId];
     controllers.set(slotId, socket.id);
-    socket.data = { slotId, name: username, userId, avatarUrl, avatarConfig };
-    lobbyPlayers.set(socket.id, { slotId, userId, username, avatarUrl, avatarConfig: avatarConfig ?? null, color });
+    socket.data = { slotId, name: username, userId, avatarUrl, avatarConfig: cfg };
+    lobbyPlayers.set(socket.id, { slotId, userId, username, avatarUrl, avatarConfig: cfg, color });
 
     console.log(`[lobby] slot=${slotId} user=${username}`);
 
-    socket.emit('lobby-join-ack', { slotId, color, username, avatarUrl, avatarConfig: avatarConfig ?? null });
+    socket.emit('lobby-join-ack', { slotId, color, username, avatarUrl, avatarConfig: cfg });
     io.emit('lobby-update', [...lobbyPlayers.values()]);
-    io.to([...displays]).emit('player-joined', { slotId, name: username, color, avatarUrl, avatarConfig: avatarConfig ?? null });
+    io.to([...displays]).emit('player-joined', { slotId, name: username, color, avatarUrl, avatarConfig: cfg });
   });
 
   // ── Legacy join (direct /controller/0-3 URL, no platform) ────────────────
@@ -321,14 +377,25 @@ io.on('connection', socket => {
     displays.delete(socket.id);
     lobbyPlayers.delete(socket.id);
 
-    for (const [sid, wsid] of controllers)
+    // Remove from queue if they were waiting
+    const qi = waitingQueue.findIndex(p => p.socketId === socket.id);
+    if (qi >= 0) {
+      waitingQueue.splice(qi, 1);
+      broadcastQueuePositions();
+    }
+
+    // Remove from active players; promote from queue if a lobby slot opened
+    let wasActive = false;
+    for (const [sid, wsid] of controllers) {
       if (wsid === socket.id) {
         controllers.delete(sid);
         io.to([...displays]).emit('player-left', { slotId: sid });
+        wasActive = true;
         break;
       }
+    }
 
-    // Broadcast updated lobby (only matters during lobby phase)
+    if (wasActive && !gameRunning) promoteFromQueue();
     if (!gameRunning) io.emit('lobby-update', [...lobbyPlayers.values()]);
   });
 });
