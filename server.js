@@ -1,29 +1,17 @@
 const express = require('express');
-const http = require('http');
+const http    = require('http');
 const { Server } = require('socket.io');
-const path = require('path');
+const path    = require('path');
 
-const app = express();
+const app        = express();
 const httpServer = http.createServer(app);
-const io = new Server(httpServer, { cors: { origin: '*' } });
+const io         = new Server(httpServer, { cors: { origin: '*' } });
 
 app.use(express.static(path.join(__dirname, 'public')));
-app.get('/', (_, res) => res.redirect('/display'));
-app.get('/display', (_, res) => res.sendFile(path.join(__dirname, 'public/display.html')));
+app.get('/',            (_, res) => res.redirect('/display'));
+app.get('/display',     (_, res) => res.sendFile(path.join(__dirname, 'public/display.html')));
+app.get('/controller',  (_, res) => res.sendFile(path.join(__dirname, 'public/controller.html')));
 app.get('/controller/:id', (_, res) => res.sendFile(path.join(__dirname, 'public/controller.html')));
-app.get('/controller',     (_, res) => res.sendFile(path.join(__dirname, 'public/controller.html')));
-
-// QR codes — point to platform /hub when configured, else fall back to controller slots
-app.get('/qrcodes', (req, res) => {
-  if (PLATFORM_URL) {
-    const hubUrl = `${PLATFORM_URL}/hub`;
-    res.json({ 0: hubUrl, 1: hubUrl, 2: hubUrl, 3: hubUrl });
-  } else {
-    const base = `${req.protocol}://${req.get('host')}`;
-    res.json({ 0: `${base}/controller/0`, 1: `${base}/controller/1`,
-               2: `${base}/controller/2`, 3: `${base}/controller/3` });
-  }
-});
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const PORT            = process.env.PORT            || 3000;
@@ -44,12 +32,13 @@ const OPP  = { up:'down', down:'up', left:'right', right:'left' };
 const DVEC = { up:[0,-1], down:[0,1], left:[-1,0], right:[1,0] };
 
 // ── Mutable game state ───────────────────────────────────────────────────────
-const displays    = new Set();
-const controllers = new Map();   // slotId → socketId
+const displays     = new Set();
+const controllers  = new Map();    // slotId → socketId
+const lobbyPlayers = new Map();    // socketId → { slotId, userId, username, avatarUrl, color }
 
-let territory  = [];
-let trailGrid  = [];
-let players    = [null, null, null, null];
+let territory   = [];
+let trailGrid   = [];
+let players     = [null, null, null, null];
 let gameRunning = false;
 let startTime   = 0;
 let tick        = 0;
@@ -61,11 +50,11 @@ const ci      = (x, y) => y * GW + x;
 const inB     = (x, y) => x >= 0 && x < GW && y >= 0 && y < GH;
 
 // ── Player helpers ────────────────────────────────────────────────────────────
-function makePlayer(id, name, platformToken = null) {
+function makePlayer(id, name, userId = null) {
   const s = SPAWNS[id];
   return { id, name, color: COLORS[id], x: s.x, y: s.y,
            dir: s.dir, pendingDir: s.dir, trail: [],
-           alive: true, respawnTimer: 0, terrCount: 0, platformToken };
+           alive: true, respawnTimer: 0, terrCount: 0, userId };
 }
 
 function giveSpawnZone(p) {
@@ -182,10 +171,10 @@ function startGame() {
   players = [0,1,2,3].map(i => {
     const sid  = controllers.get(i);
     if (!sid) return null;
-    const sock  = io.sockets.sockets.get(sid);
-    const name  = sock?.data?.name          || `P${i+1}`;
-    const token = sock?.data?.platformToken || null;
-    return makePlayer(i, name, token);
+    const sock = io.sockets.sockets.get(sid);
+    const name = sock?.data?.name   || `P${i+1}`;
+    const userId = sock?.data?.userId || null;
+    return makePlayer(i, name, userId);
   });
   players.forEach(p => { if (p) giveSpawnZone(p); });
   calcTerritory();
@@ -209,21 +198,30 @@ async function endGame() {
   console.log('[game] ended. Winner:', winner?.name);
 
   if (PLATFORM_URL && GAME_API_SECRET) {
-    postScoresToPlatform(players.filter(Boolean), total);
+    await postScoresToPlatform(players.filter(Boolean), total);
   }
+
+  // Reset for next round — players must scan again
+  setTimeout(() => {
+    controllers.clear();
+    lobbyPlayers.clear();
+    players = [null, null, null, null];
+    io.emit('lobby-update', []);
+    console.log('[lobby] reset for next round');
+  }, 8000);
 }
 
 async function postScoresToPlatform(activePlayers, total) {
-  const withTokens = activePlayers.filter(p => p.platformToken);
-  if (!withTokens.length) return;
+  const withIds = activePlayers.filter(p => p.userId);
+  if (!withIds.length) return;
 
   const results = await Promise.allSettled(
-    withTokens.map(p =>
+    withIds.map(p =>
       fetch(`${PLATFORM_URL}/api/game/score`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-secret': GAME_API_SECRET },
         body: JSON.stringify({
-          token:         p.platformToken,
+          userId:        p.userId,
           territory_pct: (p.terrCount / total) * 100,
         }),
       }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); })
@@ -231,7 +229,7 @@ async function postScoresToPlatform(activePlayers, total) {
   );
 
   const saved = results.filter(r => r.status === 'fulfilled').length;
-  console.log(`[platform] scores posted: ${saved}/${withTokens.length}`);
+  console.log(`[platform] scores posted: ${saved}/${withIds.length}`);
   if (saved > 0) io.to([...displays]).emit('scores-saved', { count: saved });
 }
 
@@ -239,56 +237,63 @@ async function postScoresToPlatform(activePlayers, total) {
 io.on('connection', socket => {
   console.log('[+]', socket.id);
 
+  // ── Display screen ────────────────────────────────────────────────────────
   socket.on('display-join', () => {
     displays.add(socket.id);
-    socket.emit('game-state', { running:false, players:[], territory:[], trailGrid:[], gridW:GW, gridH:GH, tick:0 });
+    const total = GW * GH;
+    // Send current lobby so player cards appear immediately
+    socket.emit('lobby-update', [...lobbyPlayers.values()]);
+    // If game already running, let the display know immediately
+    if (gameRunning) socket.emit('game-start');
+    socket.emit('game-state', {
+      tick, running: gameRunning, gridW: GW, gridH: GH,
+      timeLeft: gameRunning ? Math.max(0, GAME_MS - (Date.now() - startTime)) : 0,
+      players: players.map(p => p ? {
+        id: p.id, name: p.name, color: p.color,
+        x: p.x, y: p.y, dir: p.dir, trail: p.trail,
+        alive: p.alive, respawnTimer: p.respawnTimer,
+        pct: ((p.terrCount / total) * 100).toFixed(1),
+      } : null),
+      territory: territory.slice(),
+      trailGrid: trailGrid.slice(),
+    });
   });
 
-  // ── Legacy join (direct controller URL, no platform token) ────────────────
+  // ── Platform lobby join (new flow) ────────────────────────────────────────
+  socket.on('lobby-join', ({ userId, username, avatarUrl }) => {
+    if (gameRunning) {
+      socket.emit('game-in-progress');
+      return;
+    }
+
+    // Find first free slot
+    const usedSlots = new Set(controllers.keys());
+    const slotId = [0, 1, 2, 3].find(i => !usedSlots.has(i));
+    if (slotId === undefined) {
+      socket.emit('lobby-full');
+      return;
+    }
+
+    const color = COLORS[slotId];
+    controllers.set(slotId, socket.id);
+    socket.data = { slotId, name: username, userId, avatarUrl };
+    lobbyPlayers.set(socket.id, { slotId, userId, username, avatarUrl, color });
+
+    console.log(`[lobby] slot=${slotId} user=${username}`);
+
+    socket.emit('lobby-join-ack', { slotId, color, username, avatarUrl });
+    io.emit('lobby-update', [...lobbyPlayers.values()]);
+    io.to([...displays]).emit('player-joined', { slotId, name: username, color, avatarUrl });
+  });
+
+  // ── Legacy join (direct /controller/0-3 URL, no platform) ────────────────
   socket.on('player-join', ({ slotId, name }) => {
     if (slotId < 0 || slotId > 3) return;
     controllers.set(slotId, socket.id);
-    socket.data = { slotId, name, platformToken: null };
-    console.log(`[join] slot=${slotId} name=${name}`);
+    socket.data = { slotId, name, userId: null };
+    console.log(`[join-legacy] slot=${slotId} name=${name}`);
     io.to([...displays]).emit('player-joined', { slotId, name, color: COLORS[slotId] });
     socket.emit('join-ack', { slotId, name, color: COLORS[slotId] });
-  });
-
-  // ── Platform token auth ───────────────────────────────────────────────────
-  socket.on('player-auth', async ({ token }) => {
-    if (!PLATFORM_URL || !GAME_API_SECRET) {
-      socket.emit('auth-failed', { reason: 'Platform integration not configured' });
-      return;
-    }
-    try {
-      const res = await fetch(
-        `${PLATFORM_URL}/api/game/player-info?token=${encodeURIComponent(token)}`,
-        { headers: { 'x-api-secret': GAME_API_SECRET } }
-      );
-      if (!res.ok) {
-        socket.emit('auth-failed', { reason: 'Token expired — go back and tap JOIN again' });
-        return;
-      }
-      const { username, avatar_url, color } = await res.json();
-      const slotId = COLORS.indexOf(color);
-      if (slotId === -1) {
-        socket.emit('auth-failed', { reason: 'Game is full (all 4 slots taken)' });
-        return;
-      }
-      // Disconnect any stale socket in this slot
-      const prevSid = controllers.get(slotId);
-      if (prevSid && prevSid !== socket.id) {
-        io.sockets.sockets.get(prevSid)?.disconnect(true);
-      }
-      controllers.set(slotId, socket.id);
-      socket.data = { slotId, name: username, platformToken: token, avatarUrl: avatar_url };
-      console.log(`[auth] slot=${slotId} name=${username}`);
-      io.to([...displays]).emit('player-joined', { slotId, name: username, color, avatarUrl: avatar_url });
-      socket.emit('auth-ok', { slotId, name: username, color, avatarUrl: avatar_url });
-    } catch (err) {
-      console.error('[auth]', err);
-      socket.emit('auth-failed', { reason: 'Server error — try again' });
-    }
   });
 
   socket.on('player-input', ({ direction }) => {
@@ -303,18 +308,22 @@ io.on('connection', socket => {
   socket.on('disconnect', () => {
     console.log('[-]', socket.id);
     displays.delete(socket.id);
+    lobbyPlayers.delete(socket.id);
+
     for (const [sid, wsid] of controllers)
       if (wsid === socket.id) {
         controllers.delete(sid);
         io.to([...displays]).emit('player-left', { slotId: sid });
         break;
       }
+
+    // Broadcast updated lobby (only matters during lobby phase)
+    if (!gameRunning) io.emit('lobby-update', [...lobbyPlayers.values()]);
   });
 });
 
 httpServer.listen(PORT, () => {
   console.log(`Mix Master  →  http://localhost:${PORT}`);
   console.log(`  Display     →  http://localhost:${PORT}/display`);
-  console.log(`  Controller  →  http://localhost:${PORT}/controller/0  (slots 0–3)`);
   if (PLATFORM_URL) console.log(`  Platform    →  ${PLATFORM_URL}`);
 });

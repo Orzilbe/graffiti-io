@@ -10,6 +10,11 @@ const lbEl    = document.getElementById('leaderboard');
 const sidebar = document.getElementById('sidebar');
 const lbTitle = document.getElementById('sidebar-title');
 
+// When embedded inside the platform iframe, hide the lobby overlay immediately.
+// The platform's /display page handles the lobby UI itself.
+const isEmbed = new URLSearchParams(location.search).get('embed') === '1';
+if (isEmbed) lobbyEl.style.display = 'none';
+
 const COLORS = ['#FF2D78', '#00E5FF', '#76FF03', '#FF6D00'];
 const RGB    = COLORS.map(h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)]);
 
