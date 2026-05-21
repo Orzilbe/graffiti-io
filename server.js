@@ -5,9 +5,17 @@ const path    = require('path');
 
 const app        = express();
 const httpServer = http.createServer(app);
-const io         = new Server(httpServer, { cors: { origin: '*' } });
+const ALLOWED_ORIGINS = [
+  'https://mix-master-gray.vercel.app',
+  'http://localhost:3000',
+  'http://localhost:3001',
+];
+const io = new Server(httpServer, {
+  cors: { origin: ALLOWED_ORIGINS, methods: ['GET', 'POST'] },
+});
 
 app.use(express.static(path.join(__dirname, 'public')));
+app.get('/health', (_, res) => res.json({ status: 'ok' }));
 app.get('/',            (_, res) => res.redirect('/display'));
 app.get('/display',     (_, res) => res.sendFile(path.join(__dirname, 'public/display.html')));
 app.get('/controller',  (_, res) => res.sendFile(path.join(__dirname, 'public/controller.html')));
