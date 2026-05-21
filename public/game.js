@@ -78,9 +78,33 @@ socket.on('game-end', ({ winner, scores }) => {
     .map(p => `<div class="score-row"><span style="color:${p.color}">${p.name}</span><span>${p.pct}%</span></div>`)
     .join('');
   goEl.style.display = 'flex';
+
+  // Notify Mix Master platform when embedded in an iframe
+  if (window.parent !== window) {
+    window.parent.postMessage({
+      type:   'mix-master-game-end',
+      winner: winner ? { name: winner.name } : null,
+      scores: scores.map(p => ({ name: p.name, pct: parseFloat(p.pct) })),
+    }, '*');
+  }
 });
 
 document.getElementById('start-btn').addEventListener('click', () => socket.emit('game-start'));
+
+socket.on('scores-saved', ({ count }) => {
+  const toast = document.createElement('div');
+  toast.textContent = `✓ ${count} score${count !== 1 ? 's' : ''} saved`;
+  Object.assign(toast.style, {
+    position: 'fixed', bottom: '28px', left: '50%', transform: 'translateX(-50%)',
+    background: 'rgba(118,255,3,.18)', border: '2px solid #76FF03',
+    color: '#76FF03', fontFamily: "'Boogaloo', sans-serif", fontSize: '1.15rem',
+    padding: '10px 26px', borderRadius: '10px', zIndex: '99',
+    backdropFilter: 'blur(6px)', opacity: '1', transition: 'opacity 0.6s',
+  });
+  document.body.appendChild(toast);
+  setTimeout(() => { toast.style.opacity = '0'; }, 2800);
+  setTimeout(() => toast.remove(), 3400);
+});
 
 // ── Leaderboard — FLIP rank-slide animation ────────────────────────────────
 function updateLeaderboard(board) {

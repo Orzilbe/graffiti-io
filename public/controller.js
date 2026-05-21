@@ -1,11 +1,17 @@
-// Mobile controller for /controller/:id
+// Mobile controller — token-based (platform) and legacy (direct URL) flows
 
-const socket  = io();
-const slotId  = parseInt(location.pathname.split('/').pop(), 10);
-const COLORS  = ['#FF2D78', '#00E5FF', '#76FF03', '#FF6D00'];
-const myColor = COLORS[slotId] ?? '#FF2D78';
+const socket = io();
+const COLORS = ['#FF2D78', '#00E5FF', '#76FF03', '#FF6D00'];
 
-// Apply player color throughout
+// ── Auth mode detection ────────────────────────────────────────────────────
+const params   = new URLSearchParams(location.search);
+const token    = params.get('token');
+const pathId   = parseInt(location.pathname.split('/').pop(), 10);
+const isLegacy = !token && !isNaN(pathId) && pathId >= 0 && pathId <= 3;
+
+let currentSlotId = isLegacy ? pathId : null;
+let myColor       = isLegacy ? (COLORS[pathId] ?? '#FF2D78') : '#FF2D78';
+
 document.documentElement.style.setProperty('--pc', myColor);
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
@@ -13,9 +19,12 @@ const hudName   = document.getElementById('hud-name');
 const hudRank   = document.getElementById('hud-rank');
 const hudPct    = document.getElementById('hud-pct');
 const lobbyEl   = document.getElementById('lobby-screen');
+const lobbySub  = document.getElementById('lobby-sub');
+const lobbyName = document.getElementById('lobby-player-name');
 const goEl      = document.getElementById('go-screen');
 const deathEl   = document.getElementById('death-screen');
 const endEl     = document.getElementById('end-screen');
+const errorEl   = document.getElementById('error-screen');
 const cntEl     = document.getElementById('countdown');
 const endWinner = document.getElementById('end-winner');
 
@@ -25,15 +34,39 @@ let respawnIv  = null;
 
 // ── Socket ─────────────────────────────────────────────────────────────────
 socket.on('connect', () => {
-  socket.emit('player-join', { slotId, name: `P${slotId + 1}` });
+  if (token) {
+    lobbySub.textContent = 'Authenticating…';
+    socket.emit('player-auth', { token });
+  } else if (isLegacy) {
+    socket.emit('player-join', { slotId: currentSlotId, name: `P${currentSlotId + 1}` });
+  }
 });
 
+// ── Platform auth responses ────────────────────────────────────────────────
+socket.on('auth-ok', ({ slotId, name, color }) => {
+  currentSlotId = slotId;
+  myColor       = color;
+  document.documentElement.style.setProperty('--pc', color);
+  lobbyName.textContent  = name;
+  hudName.textContent    = name;
+  hudName.style.color    = color;
+  lobbySub.textContent   = 'Waiting for host…';
+});
+
+socket.on('auth-failed', ({ reason }) => {
+  document.getElementById('error-msg').textContent = reason;
+  lobbyEl.classList.remove('show');
+  errorEl.classList.add('show');
+});
+
+// ── Legacy join ack ────────────────────────────────────────────────────────
 socket.on('join-ack', ({ name, color }) => {
-  hudName.textContent = name;
-  hudName.style.color = color;
-  document.getElementById('lobby-player-name').textContent = name;
+  hudName.textContent    = name;
+  hudName.style.color    = color;
+  lobbyName.textContent  = name;
 });
 
+// ── Game events ────────────────────────────────────────────────────────────
 socket.on('game-start', () => {
   gameActive = true;
   alive      = true;
@@ -43,13 +76,13 @@ socket.on('game-start', () => {
   deathEl.classList.remove('show');
   endEl.classList.remove('show');
 
-  // Flash "GO!" for 1.1s
   goEl.classList.add('show');
   setTimeout(() => goEl.classList.remove('show'), 1100);
 });
 
 socket.on('leaderboard-update', board => {
-  const me = board.find(p => p.id === slotId);
+  if (currentSlotId === null) return;
+  const me = board.find(p => p.id === currentSlotId);
   if (!me) return;
   hudRank.textContent = `#${me.rank}`;
   hudPct.textContent  = `${me.pct}%`;
@@ -81,8 +114,8 @@ socket.on('game-end', ({ winner }) => {
   deathEl.classList.remove('show');
   goEl.classList.remove('show');
 
-  endWinner.textContent  = winner ? `${winner.name} wins!` : 'Draw!';
-  endWinner.style.color  = winner?.color ?? '#fff';
+  endWinner.textContent = winner ? `${winner.name} wins!` : 'Draw!';
+  endWinner.style.color = winner?.color ?? '#fff';
   endEl.classList.add('show');
 });
 
@@ -92,12 +125,11 @@ function sendDir(dir) {
   socket.emit('player-input', { direction: dir });
 }
 
-// D-pad button press / release
 document.querySelectorAll('.dpad-btn[data-dir]').forEach(btn => {
   const dir = btn.dataset.dir;
 
   btn.addEventListener('pointerdown', e => {
-    e.preventDefault();           // block long-press context menu on mobile
+    e.preventDefault();
     btn.classList.add('active');
     sendDir(dir);
   });
@@ -108,7 +140,6 @@ document.querySelectorAll('.dpad-btn[data-dir]').forEach(btn => {
   btn.addEventListener('pointercancel', release);
 });
 
-// Swipe anywhere on the D-pad area
 const SWIPE_MIN = 30;
 let swipeOrigin = null;
 
@@ -126,7 +157,7 @@ document.getElementById('dpad').addEventListener('touchmove', e => {
     ? (dx > 0 ? 'right' : 'left')
     : (dy > 0 ? 'down'  : 'up');
   sendDir(dir);
-  swipeOrigin = null;   // one direction per swipe gesture
+  swipeOrigin = null;
 }, { passive: true });
 
 document.getElementById('dpad').addEventListener('touchend',
