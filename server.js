@@ -207,42 +207,53 @@ async function endGame() {
     scores: sorted.map(p => ({ id:p.id, name:p.name, color:p.color,
                                pct: ((p.terrCount/total)*100).toFixed(1) })),
   });
-  console.log('[game] ended. Winner:', winner?.name);
+  const activePlayers = players.filter(Boolean);
+  console.log('[game] ended. Winner:', winner?.name,
+    '| players:', activePlayers.map(p => `${p.name}(userId=${p.userId})`).join(', '));
 
-  if (PLATFORM_URL && GAME_API_SECRET) {
-    await postScoresToPlatform(players.filter(Boolean), total);
+  if (!PLATFORM_URL || !GAME_API_SECRET) {
+    console.log('[platform] PLATFORM_URL or GAME_API_SECRET not set — scores not saved');
+  } else {
+    await postScoresToPlatform(activePlayers, total);
   }
 
-  // Reset lobby, then promote queued players into open slots
   setTimeout(() => {
     controllers.clear();
     lobbyPlayers.clear();
     players = [null, null, null, null];
     io.emit('lobby-update', []);
-    promoteFromQueue(); // fills up to 4 slots from queue
+    promoteFromQueue();
     console.log('[lobby] reset for next round');
   }, 8000);
 }
 
 async function postScoresToPlatform(activePlayers, total) {
   const withIds = activePlayers.filter(p => p.userId);
-  if (!withIds.length) return;
+  console.log(`[platform] posting scores: ${withIds.length}/${activePlayers.length} players have userId`);
+  if (!withIds.length) {
+    console.log('[platform] no players with userId — check that lobby-join sends userId');
+    return;
+  }
 
   const results = await Promise.allSettled(
-    withIds.map(p =>
-      fetch(`${PLATFORM_URL}/api/game/score`, {
+    withIds.map(async p => {
+      const territory_pct = (p.terrCount / total) * 100;
+      console.log(`[platform] → POST score userId=${p.userId} pct=${territory_pct.toFixed(1)}%`);
+      const res  = await fetch(`${PLATFORM_URL}/api/game/score`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-secret': GAME_API_SECRET },
-        body: JSON.stringify({
-          userId:        p.userId,
-          territory_pct: (p.terrCount / total) * 100,
-        }),
-      }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); })
-    )
+        body: JSON.stringify({ userId: p.userId, territory_pct }),
+      });
+      const text = await res.text();
+      console.log(`[platform] ← response ${res.status}: ${text}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`);
+    })
   );
 
-  const saved = results.filter(r => r.status === 'fulfilled').length;
-  console.log(`[platform] scores posted: ${saved}/${withIds.length}`);
+  const saved  = results.filter(r => r.status === 'fulfilled').length;
+  const failed = results.filter(r => r.status === 'rejected');
+  console.log(`[platform] scores saved: ${saved}/${withIds.length}`);
+  failed.forEach((r, i) => console.log(`[platform] failed[${i}]:`, r.reason));
   if (saved > 0) io.to([...displays]).emit('scores-saved', { count: saved });
 }
 
