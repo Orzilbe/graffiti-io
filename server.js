@@ -271,7 +271,7 @@ io.on('connection', socket => {
   });
 
   // ── Platform lobby join (new flow) ────────────────────────────────────────
-  socket.on('lobby-join', ({ userId, username, avatarUrl }) => {
+  socket.on('lobby-join', ({ userId, username, avatarUrl, avatarConfig }) => {
     if (gameRunning) {
       socket.emit('game-in-progress');
       return;
@@ -287,14 +287,14 @@ io.on('connection', socket => {
 
     const color = COLORS[slotId];
     controllers.set(slotId, socket.id);
-    socket.data = { slotId, name: username, userId, avatarUrl };
-    lobbyPlayers.set(socket.id, { slotId, userId, username, avatarUrl, color });
+    socket.data = { slotId, name: username, userId, avatarUrl, avatarConfig };
+    lobbyPlayers.set(socket.id, { slotId, userId, username, avatarUrl, avatarConfig: avatarConfig ?? null, color });
 
     console.log(`[lobby] slot=${slotId} user=${username}`);
 
-    socket.emit('lobby-join-ack', { slotId, color, username, avatarUrl });
+    socket.emit('lobby-join-ack', { slotId, color, username, avatarUrl, avatarConfig: avatarConfig ?? null });
     io.emit('lobby-update', [...lobbyPlayers.values()]);
-    io.to([...displays]).emit('player-joined', { slotId, name: username, color, avatarUrl });
+    io.to([...displays]).emit('player-joined', { slotId, name: username, color, avatarUrl, avatarConfig: avatarConfig ?? null });
   });
 
   // ── Legacy join (direct /controller/0-3 URL, no platform) ────────────────
