@@ -15,7 +15,10 @@ const io = new Server(httpServer, {
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
-app.get('/health', (_, res) => res.json({ status: 'ok' }));
+app.get('/health', (_, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.json({ status: 'ok' });
+});
 app.get('/',            (_, res) => res.redirect('/display'));
 app.get('/display',     (_, res) => res.sendFile(path.join(__dirname, 'public/display.html')));
 app.get('/controller',  (_, res) => res.sendFile(path.join(__dirname, 'public/controller.html')));
