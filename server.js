@@ -458,21 +458,40 @@ io.on('connection', socket => {
 
 // ── Last One Standing — namespace ────────────────────────────────────────────
 
-const LOS_COLORS  = ['#FF2D78', '#00E5FF', '#76FF03', '#FF6D00'];
-const LOS_POINTS  = [1000, 600, 300, 100]; // 1st … 4th place
+const LOS_COLORS       = ['#FF2D78', '#00E5FF', '#76FF03', '#FF6D00'];
+const LOS_PCT_BY_PLACE = [100, 60, 30, 10]; // territory_pct sent to platform (score = pct * 10)
+const TAP_WINDOW_MS    = 600;
 
-const losDisplays = new Set();               // display socket IDs
-const losPlayers  = new Map();               // socketId → { userId, username, color, avatarConfig }
+// Lobby state (live — updated as players join/leave)
+const losDisplays = new Set();
+const losPlayers  = new Map(); // socketId → { userId, username, color, avatarConfig }
 
-let losGameRunning = false;
+// Game state
+let losGameRunning   = false;
+let losGamePlayers   = new Map(); // frozen snapshot at game-start
+let losAlive         = new Set(); // socketIds still alive
+let losPlacements    = [];        // filled as players are eliminated (last = winner)
+let losRound         = 0;
+let losPhase         = 'lobby';   // 'lobby'|'round-start'|'countdown'|'pre-window'|'window'|'fake'|'result'
+let losFakeRound     = false;
+let losValidTappers  = new Set();
+let losRoundElim     = new Set();
 
-function losLobbySnapshot() {
-  return [...losPlayers.values()];
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function losInfo(sid) {
+  const p = losGamePlayers.get(sid) ?? losPlayers.get(sid);
+  return p ? { socketId: sid, ...p } : null;
 }
+
+function losSleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function losBroadcastLobby() {
-  losIo.emit('los-lobby-update', losLobbySnapshot());
+  const list = [...losPlayers.entries()].map(([sid, p]) => ({ socketId: sid, ...p }));
+  losIo.emit('los-lobby-update', list);
 }
+
+// ── Namespace ─────────────────────────────────────────────────────────────────
 
 const losIo = io.of('/los');
 
@@ -481,22 +500,46 @@ losIo.on('connection', socket => {
 
   socket.on('los-display-join', () => {
     losDisplays.add(socket.id);
-    socket.emit('los-lobby-update', losLobbySnapshot());
+    const list = [...losPlayers.entries()].map(([sid, p]) => ({ socketId: sid, ...p }));
+    socket.emit('los-lobby-update', list);
     if (losGameRunning) socket.emit('los-game-running');
   });
 
   socket.on('los-player-join', ({ userId, username, color, avatarConfig }) => {
-    if (losPlayers.size >= 4) { socket.emit('los-lobby-full'); return; }
-    // Assign next unused slot color if wanted color is already taken
-    const usedColors = new Set([...losPlayers.values()].map(p => p.color));
-    const slotColor  = LOS_COLORS[[...losPlayers.keys()].length] ?? LOS_COLORS[0];
-    const finalColor = (!usedColors.has(color) && color) ? color : slotColor;
+    if (losGameRunning)       { socket.emit('los-game-running'); return; }
+    if (losPlayers.size >= 4) { socket.emit('los-lobby-full');   return; }
 
-    socket.data = { userId, username, color: finalColor, avatarConfig };
-    losPlayers.set(socket.id, { userId, username, color: finalColor, avatarConfig });
+    const usedColors = new Set([...losPlayers.values()].map(p => p.color));
+    const slotColor  = LOS_COLORS[losPlayers.size] ?? LOS_COLORS[0];
+    const finalColor = (color && !usedColors.has(color)) ? color : slotColor;
+
+    socket.data = { userId, username, color: finalColor, avatarConfig: avatarConfig ?? null };
+    losPlayers.set(socket.id, { userId, username, color: finalColor, avatarConfig: avatarConfig ?? null });
     socket.emit('los-join-ack', { color: finalColor });
     losBroadcastLobby();
-    console.log(`[LOS] joined: ${username} color=${finalColor} total=${losPlayers.size}`);
+    console.log(`[LOS] joined: ${username} color=${finalColor} (${losPlayers.size}/4)`);
+  });
+
+  socket.on('los-start-game', () => {
+    if (losGameRunning || losPlayers.size < 2) return;
+    losRunGame();
+  });
+
+  socket.on('los-tap', () => {
+    if (!losGameRunning || !losAlive.has(socket.id) || losRoundElim.has(socket.id)) return;
+
+    if (losPhase === 'window') {
+      losValidTappers.add(socket.id);
+      const info = losInfo(socket.id);
+      if (info) losIo.emit('los-valid-tap', { socketId: socket.id, color: info.color });
+    } else if (losPhase === 'fake' || losPhase === 'countdown' || losPhase === 'pre-window') {
+      losRoundElim.add(socket.id);
+      const info = losInfo(socket.id);
+      if (info) losIo.emit('los-early-tap', {
+        socketId: socket.id, username: info.username, color: info.color,
+        reason:   losPhase === 'fake' ? 'fake' : 'early',
+      });
+    }
   });
 
   socket.on('disconnect', () => {
@@ -504,10 +547,138 @@ losIo.on('connection', socket => {
     losDisplays.delete(socket.id);
     if (losPlayers.has(socket.id)) {
       losPlayers.delete(socket.id);
-      losBroadcastLobby();
+      if (!losGameRunning) losBroadcastLobby();
+      // If in game: they'll be eliminated as a non-tapper at window close
     }
   });
 });
+
+// ── Game loop ─────────────────────────────────────────────────────────────────
+
+async function losRunGame() {
+  losGameRunning = true;
+  losGamePlayers = new Map(losPlayers);
+  losAlive       = new Set(losPlayers.keys());
+  losPlacements  = [];
+  losRound       = 0;
+
+  const playerList = [...losPlayers.entries()].map(([sid, p]) => ({ socketId: sid, ...p }));
+  losIo.emit('los-game-start', { players: playerList });
+  console.log(`[LOS] game started — ${playerList.length} players`);
+
+  await losSleep(2000);
+
+  while (losAlive.size > 1) {
+    losRound++;
+    await losRunRound();
+    if (losAlive.size > 1) await losSleep(2000);
+  }
+
+  await losEndGame();
+}
+
+async function losRunRound() {
+  const isFake = losRound >= 7 && Math.random() < 0.3;
+  losFakeRound  = isFake;
+  losValidTappers = new Set();
+  losRoundElim    = new Set();
+
+  // ① Round banner
+  losPhase = 'round-start';
+  losIo.emit('los-round-start', { round: losRound, alive: losAlive.size });
+  await losSleep(1500);
+
+  // ② Countdown 3 → 2 → 1
+  losPhase = 'countdown';
+  for (const n of [3, 2, 1]) {
+    losIo.emit('los-countdown', { value: n });
+    await losSleep(1000);
+  }
+
+  // ③ Suspense pause (longer + random from round 4)
+  losPhase = 'pre-window';
+  await losSleep(losRound <= 3 ? 200 : 500 + Math.random() * 2500);
+
+  // ④ TAP! or FAKE!
+  if (isFake) {
+    losPhase = 'fake';
+    losIo.emit('los-fake');
+    await losSleep(1500);
+  } else {
+    losPhase = 'window';
+    losIo.emit('los-tap-now');
+    await losSleep(TAP_WINDOW_MS);
+
+    // Mark non-tappers as too-late
+    const tooLate = [...losAlive].filter(sid => !losValidTappers.has(sid) && !losRoundElim.has(sid));
+    tooLate.forEach(sid => {
+      losRoundElim.add(sid);
+      const info = losInfo(sid);
+      if (info) losIo.emit('los-late-tap', { socketId: sid, username: info.username, color: info.color });
+    });
+
+    // Edge-case: all alive were eliminated — spare the first valid tapper
+    if (losRoundElim.size >= losAlive.size && losValidTappers.size > 0) {
+      losRoundElim.delete([...losValidTappers][0]);
+    }
+  }
+
+  // ⑤ Apply eliminations
+  losPhase = 'result';
+  const eliminated = [...losRoundElim].map(losInfo).filter(Boolean);
+  eliminated.forEach(p => { losAlive.delete(p.socketId); losPlacements.push(p); });
+
+  losIo.emit('los-round-result', {
+    eliminated,
+    survivors: [...losAlive].map(losInfo).filter(Boolean),
+  });
+  console.log(`[LOS] round ${losRound}: elim=[${eliminated.map(p=>p.username).join(',')||'none'}] alive=${losAlive.size}`);
+
+  losPhase = 'lobby';
+}
+
+async function losEndGame() {
+  losGameRunning = false;
+  losPhase       = 'lobby';
+
+  const winner = losAlive.size === 1 ? losInfo([...losAlive][0]) : null;
+  if (winner) losPlacements.push(winner);
+
+  // losPlacements[last] = winner (1st), [0] = first eliminated (last place)
+  const finalPlacements = [...losPlacements].reverse().map((p, i) => ({ ...p, place: i + 1 }));
+
+  losIo.emit('los-game-over', { winner: winner ? { ...winner, place: 1 } : null, placements: finalPlacements });
+  console.log('[LOS] game over —', finalPlacements.map(p => `${p.place}.${p.username}`).join(', '));
+
+  if (PLATFORM_URL && GAME_API_SECRET) {
+    await postLOSScores(finalPlacements).catch(err => console.error('[LOS] score post failed:', err));
+  } else {
+    console.log('[LOS] PLATFORM_URL or GAME_API_SECRET not set — scores not saved');
+  }
+
+  setTimeout(() => {
+    losPlayers.clear();
+    losAlive.clear();
+    losPlacements  = [];
+    losIo.emit('los-lobby-update', []);
+    console.log('[LOS] lobby reset');
+  }, 10_000);
+}
+
+async function postLOSScores(placements) {
+  const withIds = placements.filter(p => p.userId);
+  console.log(`[LOS platform] posting ${withIds.length}/${placements.length} scores`);
+  await Promise.allSettled(withIds.map(async p => {
+    const territory_pct = LOS_PCT_BY_PLACE[p.place - 1] ?? 10;
+    const res = await fetch(`${PLATFORM_URL}/api/game/score`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-secret': GAME_API_SECRET },
+      body:    JSON.stringify({ userId: p.userId, territory_pct }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    console.log(`[LOS platform] saved ${p.username} place=${p.place} pct=${territory_pct}`);
+  }));
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 

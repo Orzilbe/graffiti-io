@@ -140,6 +140,65 @@
       color: rgba(255,255,255,.8);
     }
 
+    /* ── Game screen ── */
+    #screen-game {
+      gap: 2rem;
+    }
+
+    #tap-hint {
+      font-family: 'Permanent Marker', cursive;
+      font-size: 1.5rem;
+      color: rgba(255,255,255,.6);
+      min-height: 2rem;
+      letter-spacing: .05em;
+    }
+
+    #tap-status {
+      font-size: 1rem;
+      color: rgba(255,255,255,.35);
+      min-height: 1.4rem;
+    }
+
+    .tap-btn {
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      border: none;
+      font-family: 'Permanent Marker', cursive;
+      font-size: 2.5rem;
+      cursor: pointer;
+      transition: transform .1s, box-shadow .2s, background .2s;
+      touch-action: manipulation;
+    }
+
+    .tap-btn:active { transform: scale(.93); }
+
+    .tap-btn.tap-wait {
+      background: rgba(255,255,255,.06);
+      color: rgba(255,255,255,.25);
+      box-shadow: none;
+      cursor: not-allowed;
+    }
+
+    .tap-btn.tap-go {
+      background: var(--green);
+      color: #111;
+      box-shadow: 0 0 60px rgba(118,255,3,.7), 0 0 120px rgba(118,255,3,.3);
+      animation: goGlow .4s ease-out;
+    }
+
+    .tap-btn.tap-fake {
+      background: #cc0000;
+      color: #fff;
+      box-shadow: 0 0 60px rgba(200,0,0,.7);
+    }
+
+    @keyframes goGlow {
+      0%   { transform: scale(.85); }
+      60%  { transform: scale(1.08); }
+      100% { transform: scale(1); }
+    }
+
     /* ── Eliminated screen ── */
     #screen-eliminated h2 {
       font-family: 'Permanent Marker', cursive;
@@ -154,6 +213,24 @@
       color: rgba(255,255,255,.6);
     }
 
+    /* ── Winner screen ── */
+    #screen-winner {
+      gap: 1rem;
+    }
+
+    #winner-text {
+      font-family: 'Permanent Marker', cursive;
+      font-size: 3rem;
+      text-shadow: 0 0 60px currentColor;
+      animation: winnerPop .5s cubic-bezier(.22,1,.36,1);
+    }
+
+    @keyframes winnerPop {
+      0%   { transform: scale(.5); opacity: 0; }
+      60%  { transform: scale(1.1); }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
     /* ── Full-lobby message ── */
     #screen-full h2 {
       font-family: 'Permanent Marker', cursive;
@@ -162,6 +239,8 @@
     }
 
     #screen-full p { color: rgba(255,255,255,.5); }
+
+    .hidden { opacity: 0 !important; pointer-events: none !important; }
   </style>
 </head>
 <body>
@@ -182,11 +261,24 @@
     <div id="players-list"></div>
   </div>
 
+  <!-- Game: tap screen -->
+  <div id="screen-game" class="screen hidden">
+    <div id="tap-hint">Get ready…</div>
+    <button class="tap-btn tap-wait" id="tap-btn" disabled>🎨</button>
+    <div id="tap-status"></div>
+  </div>
+
   <!-- Eliminated -->
   <div id="screen-eliminated" class="screen hidden">
     <div style="font-size:4rem">💥</div>
     <h2>SPRAYED OUT!</h2>
     <div id="placement-text"></div>
+  </div>
+
+  <!-- Winner -->
+  <div id="screen-winner" class="screen hidden">
+    <div style="font-size:5rem">🏆</div>
+    <div id="winner-text">YOU WIN!</div>
   </div>
 
   <!-- Lobby full -->
