@@ -509,9 +509,8 @@ losIo.on('connection', socket => {
     if (losGameRunning)       { socket.emit('los-game-running'); return; }
     if (losPlayers.size >= 4) { socket.emit('los-lobby-full');   return; }
 
-    const usedColors = new Set([...losPlayers.values()].map(p => p.color));
-    const slotColor  = LOS_COLORS[losPlayers.size] ?? LOS_COLORS[0];
-    const finalColor = (color && !usedColors.has(color)) ? color : slotColor;
+    // Trust the player's own avatar color from the platform; slot color only as fallback
+    const finalColor = avatarConfig?.color ?? color ?? LOS_COLORS[losPlayers.size % LOS_COLORS.length];
 
     socket.data = { userId, username, color: finalColor, avatarConfig: avatarConfig ?? null };
     losPlayers.set(socket.id, { userId, username, color: finalColor, avatarConfig: avatarConfig ?? null });
@@ -571,7 +570,7 @@ async function losRunGame() {
   while (losAlive.size > 1) {
     losRound++;
     await losRunRound();
-    if (losAlive.size > 1) await losSleep(2000);
+    if (losAlive.size > 1) await losSleep(3000);
   }
 
   await losEndGame();
@@ -657,12 +656,15 @@ async function losEndGame() {
   }
 
   setTimeout(() => {
-    losPlayers.clear();
+    // Remove disconnected players; keep connected ones so they auto-join next game
+    for (const [sid] of losPlayers) {
+      if (!losIo.sockets.sockets.get(sid)?.connected) losPlayers.delete(sid);
+    }
     losAlive.clear();
     losPlacements  = [];
-    losIo.emit('los-lobby-update', []);
-    console.log('[LOS] lobby reset');
-  }, 10_000);
+    losBroadcastLobby();
+    console.log(`[LOS] lobby reset — ${losPlayers.size} player(s) retained`);
+  }, 8_000);
 }
 
 async function postLOSScores(placements) {

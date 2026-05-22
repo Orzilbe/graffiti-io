@@ -119,8 +119,8 @@ socket.on('los-round-result', ({ eliminated, survivors }) => {
 socket.on('los-game-over', ({ winner, placements }) => {
   gameRunning = false;
 
-  phGoWinner.textContent = winner.username;
-  phGoWinner.style.color = winner.color;
+  phGoWinner.textContent = winner?.username ?? '???';
+  phGoWinner.style.color = winner?.color ?? '#FFD600';
 
   phGoPlacements.innerHTML = placements.map((p, i) => `
     <div class="go-place">
@@ -131,17 +131,17 @@ socket.on('los-game-over', ({ winner, placements }) => {
   `).join('');
 
   showOverlay('gameover');
-  launchConfetti(winner.color);
+  launchConfetti(winner?.color ?? '#FFD600');
 
-  // reset lobby after 10s
+  // After 8s: hide winner overlay; server broadcasts lobby-update with retained players
   setTimeout(() => {
-    gameRunning = false;
-    players = new Map();
     roundBadgeEl.textContent = '';
     showOverlay(null);
-    renderArena();
     stopConfetti();
-  }, 10_000);
+    // Reset all current players to alive for lobby display while waiting for server update
+    players.forEach(p => { p.alive = true; });
+    renderArena();
+  }, 8_000);
 });
 
 // ── Arena ─────────────────────────────────────────────────────────────────────
