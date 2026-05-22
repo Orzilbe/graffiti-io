@@ -24,6 +24,10 @@ app.get('/display',     (_, res) => res.sendFile(path.join(__dirname, 'public/di
 app.get('/controller',  (_, res) => res.sendFile(path.join(__dirname, 'public/controller.html')));
 app.get('/controller/:id', (_, res) => res.sendFile(path.join(__dirname, 'public/controller.html')));
 
+// ── Last One Standing ─────────────────────────────────────────────────────────
+app.get('/last-one-standing/display',    (_, res) => res.sendFile(path.join(__dirname, 'public/last-one-standing/display.html')));
+app.get('/last-one-standing/controller', (_, res) => res.sendFile(path.join(__dirname, 'public/last-one-standing/controller.html')));
+
 // ── Constants ────────────────────────────────────────────────────────────────
 const PORT            = process.env.PORT            || 3000;
 const PLATFORM_URL    = process.env.PLATFORM_URL    || null;
@@ -452,8 +456,64 @@ io.on('connection', socket => {
   });
 });
 
+// ── Last One Standing — namespace ────────────────────────────────────────────
+
+const LOS_COLORS  = ['#FF2D78', '#00E5FF', '#76FF03', '#FF6D00'];
+const LOS_POINTS  = [1000, 600, 300, 100]; // 1st … 4th place
+
+const losDisplays = new Set();               // display socket IDs
+const losPlayers  = new Map();               // socketId → { userId, username, color, avatarConfig }
+
+let losGameRunning = false;
+
+function losLobbySnapshot() {
+  return [...losPlayers.values()];
+}
+
+function losBroadcastLobby() {
+  losIo.emit('los-lobby-update', losLobbySnapshot());
+}
+
+const losIo = io.of('/los');
+
+losIo.on('connection', socket => {
+  console.log('[LOS+]', socket.id);
+
+  socket.on('los-display-join', () => {
+    losDisplays.add(socket.id);
+    socket.emit('los-lobby-update', losLobbySnapshot());
+    if (losGameRunning) socket.emit('los-game-running');
+  });
+
+  socket.on('los-player-join', ({ userId, username, color, avatarConfig }) => {
+    if (losPlayers.size >= 4) { socket.emit('los-lobby-full'); return; }
+    // Assign next unused slot color if wanted color is already taken
+    const usedColors = new Set([...losPlayers.values()].map(p => p.color));
+    const slotColor  = LOS_COLORS[[...losPlayers.keys()].length] ?? LOS_COLORS[0];
+    const finalColor = (!usedColors.has(color) && color) ? color : slotColor;
+
+    socket.data = { userId, username, color: finalColor, avatarConfig };
+    losPlayers.set(socket.id, { userId, username, color: finalColor, avatarConfig });
+    socket.emit('los-join-ack', { color: finalColor });
+    losBroadcastLobby();
+    console.log(`[LOS] joined: ${username} color=${finalColor} total=${losPlayers.size}`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log('[LOS-]', socket.id);
+    losDisplays.delete(socket.id);
+    if (losPlayers.has(socket.id)) {
+      losPlayers.delete(socket.id);
+      losBroadcastLobby();
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 httpServer.listen(PORT, () => {
   console.log(`Mix Master  →  http://localhost:${PORT}`);
   console.log(`  Display     →  http://localhost:${PORT}/display`);
+  console.log(`  LOS Display →  http://localhost:${PORT}/last-one-standing/display`);
   if (PLATFORM_URL) console.log(`  Platform    →  ${PLATFORM_URL}`);
 });
