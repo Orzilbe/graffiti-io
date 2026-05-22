@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>Last One Standing — Controller</title>
+  <title>Last One Standing</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Boogaloo&display=swap" rel="stylesheet" />
@@ -11,24 +11,23 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --pink:    #FF2D78;
-      --cyan:    #00E5FF;
-      --green:   #76FF03;
-      --orange:  #FF6D00;
-      --bg:      #111118;
-      --surface: #1a1a28;
-      --player:  #FF2D78;
+      --pink:   #FF2D78;
+      --cyan:   #00E5FF;
+      --green:  #76FF03;
+      --orange: #FF6D00;
+      --bg:     #111118;
+      --player: #FF2D78;
     }
 
     html, body {
-      height: 100%;
+      height: 100%; width: 100%;
       background: var(--bg);
       color: #fff;
       font-family: 'Boogaloo', cursive;
+      overflow: hidden;
       touch-action: none;
       user-select: none;
       -webkit-user-select: none;
-      overflow: hidden;
     }
 
     /* ── Screens ── */
@@ -42,27 +41,19 @@
       gap: 1.5rem;
       padding: 2rem;
       text-align: center;
-      transition: opacity .3s;
+      transition: opacity .25s;
     }
-
     .screen.hidden { opacity: 0; pointer-events: none; }
 
-    /* ── Join screen ── */
+    /* ── Join ── */
     #screen-join h1 {
       font-family: 'Permanent Marker', cursive;
       font-size: 2rem;
       color: var(--pink);
       text-shadow: 0 0 30px rgba(255,45,120,.6);
     }
-
-    #screen-join p {
-      color: rgba(255,255,255,.5);
-      font-size: 1.1rem;
-    }
-
     #username-input {
-      width: 100%;
-      max-width: 280px;
+      width: 100%; max-width: 280px;
       padding: .9rem 1.2rem;
       border-radius: 1rem;
       border: 2px solid rgba(255,255,255,.15);
@@ -73,12 +64,9 @@
       text-align: center;
       outline: none;
     }
-
     #username-input:focus { border-color: var(--cyan); }
-
     #join-btn {
-      width: 100%;
-      max-width: 280px;
+      width: 100%; max-width: 280px;
       padding: 1rem;
       border-radius: 1rem;
       border: none;
@@ -88,159 +76,171 @@
       font-size: 1.4rem;
       cursor: pointer;
       box-shadow: 0 0 30px rgba(255,45,120,.5);
-      transition: transform .15s;
       touch-action: manipulation;
+      transition: transform .12s;
     }
     #join-btn:active { transform: scale(.96); }
 
-    /* ── Lobby / waiting screen ── */
-    #screen-lobby h2 {
-      font-family: 'Permanent Marker', cursive;
-      font-size: 1.8rem;
-    }
-
-    #screen-lobby .you-re-in {
+    /* ── Lobby ── */
+    .you-re-in {
       font-family: 'Permanent Marker', cursive;
       font-size: 2.2rem;
       text-shadow: 0 0 30px currentColor;
     }
-
-    .waiting-msg {
-      color: rgba(255,255,255,.4);
-      font-size: 1.1rem;
-    }
+    .waiting-msg { color: rgba(255,255,255,.4); font-size: 1.1rem; }
 
     #players-list {
-      width: 100%;
-      max-width: 300px;
-      display: flex;
-      flex-direction: column;
-      gap: .5rem;
-      margin-top: .5rem;
+      width: 100%; max-width: 300px;
+      display: flex; flex-direction: column; gap: .5rem;
     }
-
     .player-row {
-      display: flex;
-      align-items: center;
-      gap: .75rem;
+      display: flex; align-items: center; gap: .75rem;
       padding: .6rem 1rem;
       border-radius: .75rem;
       background: rgba(255,255,255,.04);
       border: 1px solid rgba(255,255,255,.08);
     }
+    .player-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+    .player-row-name { font-size: 1rem; color: rgba(255,255,255,.8); }
 
-    .player-dot {
-      width: 12px; height: 12px;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-
-    .player-row-name {
-      font-size: 1rem;
-      color: rgba(255,255,255,.8);
-    }
-
-    /* ── Game screen ── */
+    /* ── Game screen — full-screen reactive ── */
     #screen-game {
-      gap: 2rem;
+      padding: 0;
+      gap: 0;
+      transition: background .2s;
     }
 
-    #tap-hint {
+    #game-state-bg {
+      position: absolute;
+      inset: 0;
+      transition: background .18s, opacity .18s;
+    }
+
+    #round-label {
+      position: absolute;
+      top: 1.5rem;
       font-family: 'Permanent Marker', cursive;
-      font-size: 1.5rem;
-      color: rgba(255,255,255,.6);
-      min-height: 2rem;
-      letter-spacing: .05em;
-    }
-
-    #tap-status {
       font-size: 1rem;
       color: rgba(255,255,255,.35);
-      min-height: 1.4rem;
+      letter-spacing: .15em;
+      z-index: 2;
     }
 
-    .tap-btn {
-      width: 220px;
-      height: 220px;
-      border-radius: 50%;
-      border: none;
+    #game-center {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      pointer-events: none;
+    }
+
+    #game-big-text {
       font-family: 'Permanent Marker', cursive;
-      font-size: 2.5rem;
-      cursor: pointer;
-      transition: transform .1s, box-shadow .2s, background .2s;
-      touch-action: manipulation;
+      font-size: clamp(5rem, 30vw, 10rem);
+      line-height: 1;
+      text-align: center;
     }
 
-    .tap-btn:active { transform: scale(.93); }
-
-    .tap-btn.tap-wait {
-      background: rgba(255,255,255,.06);
-      color: rgba(255,255,255,.25);
-      box-shadow: none;
-      cursor: not-allowed;
+    #game-sub-text {
+      font-family: 'Boogaloo', cursive;
+      font-size: 1.4rem;
+      color: rgba(255,255,255,.7);
+      min-height: 1.8rem;
     }
 
-    .tap-btn.tap-go {
-      background: var(--green);
-      color: #111;
-      box-shadow: 0 0 60px rgba(118,255,3,.7), 0 0 120px rgba(118,255,3,.3);
-      animation: goGlow .4s ease-out;
+    /* State: wait (dark) */
+    #screen-game[data-state="wait"] #game-state-bg { background: rgba(0,0,0,0); }
+    #screen-game[data-state="wait"] #game-big-text { color: rgba(255,255,255,.15); }
+
+    /* State: countdown */
+    #screen-game[data-state="countdown"] #game-state-bg { background: rgba(0,0,0,.4); }
+
+    /* State: go — entire screen green and tappable */
+    #screen-game[data-state="go"] { background: #0a2a00; cursor: pointer; }
+    #screen-game[data-state="go"] #game-state-bg {
+      background: radial-gradient(ellipse at center, #1a5500 0%, #0a2a00 100%);
+    }
+    #screen-game[data-state="go"] #game-big-text {
+      color: var(--green);
+      text-shadow: 0 0 60px var(--green), 0 0 120px rgba(118,255,3,.4);
+      animation: goPulse .35s ease-out;
     }
 
-    .tap-btn.tap-fake {
-      background: #cc0000;
-      color: #fff;
-      box-shadow: 0 0 60px rgba(200,0,0,.7);
+    @keyframes goPulse {
+      0%   { transform: scale(.7); opacity: 0; }
+      60%  { transform: scale(1.1); }
+      100% { transform: scale(1); opacity: 1; }
     }
 
-    @keyframes goGlow {
-      0%   { transform: scale(.85); }
-      60%  { transform: scale(1.08); }
-      100% { transform: scale(1); }
+    /* State: fake — entire screen red */
+    #screen-game[data-state="fake"] { background: #2a0000; }
+    #screen-game[data-state="fake"] #game-state-bg {
+      background: radial-gradient(ellipse at center, #550000 0%, #1a0000 100%);
+    }
+    #screen-game[data-state="fake"] #game-big-text {
+      color: #ff3333;
+      text-shadow: 0 0 60px rgba(255,0,0,.8);
+      animation: fakeShake .5s ease-in-out;
     }
 
-    /* ── Eliminated screen ── */
+    @keyframes fakeShake {
+      0%,100% { transform: translateX(0) rotate(0); }
+      15%,55% { transform: translateX(-16px) rotate(-2deg); }
+      30%,70% { transform: translateX(16px) rotate(2deg); }
+      85%     { transform: translateX(-8px) rotate(-1deg); }
+    }
+
+    /* State: survived — brief green flash */
+    #screen-game[data-state="survived"] #game-state-bg { background: rgba(118,255,3,.1); }
+    #screen-game[data-state="survived"] #game-big-text { color: var(--green); }
+
+    /* ── Eliminated ── */
     #screen-eliminated h2 {
       font-family: 'Permanent Marker', cursive;
       font-size: 2.5rem;
       color: var(--pink);
       text-shadow: 0 0 40px rgba(255,45,120,.7);
     }
-
     #placement-text {
       font-family: 'Permanent Marker', cursive;
-      font-size: 1.5rem;
-      color: rgba(255,255,255,.6);
+      font-size: 1.4rem;
+      color: rgba(255,255,255,.55);
     }
 
-    /* ── Winner screen ── */
-    #screen-winner {
-      gap: 1rem;
-    }
-
+    /* ── Winner ── */
     #winner-text {
       font-family: 'Permanent Marker', cursive;
       font-size: 3rem;
       text-shadow: 0 0 60px currentColor;
       animation: winnerPop .5s cubic-bezier(.22,1,.36,1);
     }
-
     @keyframes winnerPop {
       0%   { transform: scale(.5); opacity: 0; }
       60%  { transform: scale(1.1); }
       100% { transform: scale(1); opacity: 1; }
     }
 
-    /* ── Full-lobby message ── */
+    /* ── Full lobby ── */
     #screen-full h2 {
       font-family: 'Permanent Marker', cursive;
       font-size: 2rem;
       color: var(--orange);
     }
-
     #screen-full p { color: rgba(255,255,255,.5); }
 
-    .hidden { opacity: 0 !important; pointer-events: none !important; }
+    /* ── Countdown ring ── */
+    .count-ring {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      z-index: 1;
+    }
   </style>
 </head>
 <body>
@@ -248,7 +248,7 @@
   <!-- Join -->
   <div id="screen-join" class="screen">
     <h1>LAST ONE STANDING</h1>
-    <p>Enter your name to join the battle</p>
+    <p style="color:rgba(255,255,255,.5);font-size:1.1rem">Enter your name to join the battle</p>
     <input id="username-input" type="text" placeholder="Your name" maxlength="16"
            autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
     <button id="join-btn">JOIN 🎨</button>
@@ -261,11 +261,14 @@
     <div id="players-list"></div>
   </div>
 
-  <!-- Game: tap screen -->
-  <div id="screen-game" class="screen hidden">
-    <div id="tap-hint">Get ready…</div>
-    <button class="tap-btn tap-wait" id="tap-btn" disabled>🎨</button>
-    <div id="tap-status"></div>
+  <!-- Game: full-screen reactive -->
+  <div id="screen-game" class="screen hidden" data-state="wait">
+    <div id="game-state-bg"></div>
+    <div id="round-label"></div>
+    <div id="game-center">
+      <div id="game-big-text">🎨</div>
+      <div id="game-sub-text"></div>
+    </div>
   </div>
 
   <!-- Eliminated -->
