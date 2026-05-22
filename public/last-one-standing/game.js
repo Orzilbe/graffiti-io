@@ -37,10 +37,16 @@ function showOverlay(name) {
 }
 
 // ── Socket registration ───────────────────────────────────────────────────────
-socket.emit('los-display-join');
+// Register on every connect (handles reconnects too)
+socket.on('connect', () => {
+  console.log('[LOS display] connected:', socket.id);
+  socket.emit('los-display-join');
+});
 
 // ── Lobby events ──────────────────────────────────────────────────────────────
 socket.on('los-lobby-update', (list) => {
+  console.log('[LOS display] lobby-update received:', list.length, 'player(s)',
+    list.map(p => p.username));
   if (gameRunning) return;
   players = new Map(list.map(p => [p.socketId, { ...p, alive: true }]));
   renderArena();
@@ -203,13 +209,20 @@ startBtnEl.addEventListener('click', () => {
 });
 
 // ── Leaderboard ───────────────────────────────────────────────────────────────
+// Platform URL injected by display.html from ?platform= query param
+const PLATFORM_URL = window.__PLATFORM_URL || '';
+
 async function fetchLeaderboard() {
   try {
-    const res = await fetch('/api/leaderboard/display', { cache: 'no-store' });
-    if (!res.ok) return;
+    const res = await fetch(`${PLATFORM_URL}/api/leaderboard/display`, { cache: 'no-store' });
+    if (!res.ok) {
+      console.warn('[LOS display] leaderboard fetch failed:', res.status, PLATFORM_URL);
+      return;
+    }
     const { board } = await res.json();
+    console.log('[LOS display] leaderboard:', board?.length, 'entries');
     renderLeaderboard(board ?? []);
-  } catch { /* silently skip */ }
+  } catch (e) { console.warn('[LOS display] leaderboard error:', e); }
 }
 
 function renderLeaderboard(rows) {

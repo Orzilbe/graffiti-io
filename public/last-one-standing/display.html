@@ -462,6 +462,12 @@
     </div>
   </aside>
 
+  <script>
+    // Platform URL passed as ?platform=... query param by the host platform iframe.
+    // game.js reads window.__PLATFORM_URL for the leaderboard API call.
+    window.__PLATFORM_URL = new URLSearchParams(window.location.search).get('platform')
+      || 'https://mix-master-gray.vercel.app';
+  </script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="game.js"></script>
 </body>

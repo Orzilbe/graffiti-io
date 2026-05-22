@@ -488,6 +488,7 @@ function losSleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function losBroadcastLobby() {
   const list = [...losPlayers.entries()].map(([sid, p]) => ({ socketId: sid, ...p }));
+  console.log(`[LOS] broadcast lobby → ${list.length} player(s):`, list.map(p => p.username));
   losIo.emit('los-lobby-update', list);
 }
 
