@@ -24,6 +24,16 @@ app.get('/display',     (_, res) => res.sendFile(path.join(__dirname, 'public/di
 app.get('/controller',  (_, res) => res.sendFile(path.join(__dirname, 'public/controller.html')));
 app.get('/controller/:id', (_, res) => res.sendFile(path.join(__dirname, 'public/controller.html')));
 
+// ── Tap Frenzy routes ─────────────────────────────────────────────────────────
+app.get('/tap-frenzy/display',    (_, res) =>
+  res.sendFile(path.join(__dirname, 'public/tap-frenzy/display.html')));
+app.get('/tap-frenzy/controller', (_, res) =>
+  res.sendFile(path.join(__dirname, 'public/tap-frenzy/controller.html')));
+app.get('/tap-frenzy/config.js',  (_, res) => {
+  res.type('application/javascript');
+  res.send(`window.TF_PLATFORM_URL = ${JSON.stringify(process.env.PLATFORM_URL || '')};`);
+});
+
 // ── Constants ────────────────────────────────────────────────────────────────
 const PORT            = process.env.PORT            || 3000;
 const PLATFORM_URL    = process.env.PLATFORM_URL    || null;
@@ -452,8 +462,117 @@ io.on('connection', socket => {
   });
 });
 
+// ── Tap Frenzy namespace ──────────────────────────────────────────────────────
+const tfIo       = io.of('/tap-frenzy');
+const TF_POINTS  = [1000, 600, 300, 100];
+const TF_DURATION = 30;
+
+let tfDisplays    = new Set();
+let tfPlayers     = new Map();   // socketId → { userId, username, color, taps }
+let tfRunning     = false;
+let tfTimerId     = null;
+let tfSecondsLeft = TF_DURATION;
+
+function tfBroadcastLobby() {
+  const players = [...tfPlayers.values()].map(
+    ({ userId, username, color, taps }) => ({ userId, username, color, taps })
+  );
+  tfIo.emit('tf-lobby-update', { players });
+}
+
+function tfEndGame() {
+  if (tfTimerId) { clearInterval(tfTimerId); tfTimerId = null; }
+  tfRunning = false;
+
+  const sorted = [...tfPlayers.values()].sort((a, b) => b.taps - a.taps);
+  const scores = sorted.map((p, i) => ({
+    userId:   p.userId,
+    username: p.username,
+    color:    p.color,
+    taps:     p.taps,
+    points:   TF_POINTS[i] ?? TF_POINTS[TF_POINTS.length - 1],
+  }));
+
+  tfIo.emit('tf-game-end', { scores });
+  console.log('[tf] ended:', scores.map(s => `${s.username}=${s.taps}t/${s.points}pts`).join(', '));
+
+  if (PLATFORM_URL && GAME_API_SECRET) {
+    scores.forEach(async s => {
+      if (!s.userId) return;
+      try {
+        const res = await fetch(`${PLATFORM_URL}/api/game/score`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-secret': GAME_API_SECRET },
+          body:    JSON.stringify({ userId: s.userId, territory_pct: s.points / 10 }),
+        });
+        console.log(`[tf] score ${s.username}: ${res.status}`);
+      } catch (e) {
+        console.log(`[tf] score post failed ${s.username}:`, e.message);
+      }
+    });
+  }
+
+  setTimeout(() => {
+    tfPlayers.clear();
+    tfSecondsLeft = TF_DURATION;
+    tfIo.emit('tf-lobby-reset');
+    tfBroadcastLobby();
+    console.log('[tf] lobby reset');
+  }, 10_000);
+}
+
+tfIo.on('connection', socket => {
+  console.log('[tf+]', socket.id);
+
+  socket.on('tf-display-join', () => {
+    tfDisplays.add(socket.id);
+    tfBroadcastLobby();
+  });
+
+  socket.on('tf-player-join', ({ userId, username, color }) => {
+    if (tfRunning) return;
+    tfPlayers.set(socket.id, { userId, username, color, taps: 0 });
+    socket.emit('tf-join-ack', { color });
+    tfBroadcastLobby();
+    console.log(`[tf] ${username} joined (${tfPlayers.size} players)`);
+  });
+
+  socket.on('tf-start-game', () => {
+    if (tfRunning || tfPlayers.size < 2) return;
+    tfRunning     = true;
+    tfSecondsLeft = TF_DURATION;
+    for (const p of tfPlayers.values()) p.taps = 0;
+    tfIo.emit('tf-game-start', { duration: TF_DURATION });
+    console.log('[tf] started with', tfPlayers.size, 'players');
+
+    tfTimerId = setInterval(() => {
+      tfSecondsLeft--;
+      tfIo.emit('tf-timer', { secondsLeft: tfSecondsLeft });
+      if (tfSecondsLeft <= 0) tfEndGame();
+    }, 1_000);
+  });
+
+  socket.on('tf-tap', () => {
+    if (!tfRunning) return;
+    const p = tfPlayers.get(socket.id);
+    if (!p) return;
+    p.taps++;
+    tfIo.emit('tf-tap-update', { playerId: p.userId, count: p.taps });
+  });
+
+  socket.on('disconnect', () => {
+    console.log('[tf-]', socket.id);
+    tfDisplays.delete(socket.id);
+    if (tfPlayers.has(socket.id)) {
+      tfPlayers.delete(socket.id);
+      if (!tfRunning) tfBroadcastLobby();
+    }
+  });
+});
+
 httpServer.listen(PORT, () => {
   console.log(`Mix Master  →  http://localhost:${PORT}`);
   console.log(`  Display     →  http://localhost:${PORT}/display`);
+  console.log(`  Tap Frenzy  →  http://localhost:${PORT}/tap-frenzy/display`);
   if (PLATFORM_URL) console.log(`  Platform    →  ${PLATFORM_URL}`);
 });
