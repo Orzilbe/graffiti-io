@@ -374,6 +374,7 @@ io.on('connection', socket => {
   socket.on('lobby-join', ({ userId, username, avatarUrl, avatarConfig }) => {
     const cfg = avatarConfig ?? null;
     const wantedColor = cfg?.color;  // always derive from avatar_config
+    console.log(`[lobby] join received: userId=${userId} username=${username} wantedColor=${wantedColor} hasAvatarConfig=${!!cfg}`);
 
     // If game is running → queue for next round and notify client
     if (gameRunning) {
@@ -530,6 +531,7 @@ tfIo.on('connection', socket => {
   });
 
   socket.on('tf-player-join', ({ userId, username, color }) => {
+    console.log(`[tf] join received: userId=${userId} username=${username} color=${color}`);
     if (tfRunning) { socket.emit('tf-full'); return; }
     if (tfPlayers.size >= 4) { socket.emit('tf-full'); return; }
     tfPlayers.set(socket.id, { userId, username, color, taps: 0 });
