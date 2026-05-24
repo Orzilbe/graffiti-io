@@ -530,7 +530,8 @@ tfIo.on('connection', socket => {
   });
 
   socket.on('tf-player-join', ({ userId, username, color }) => {
-    if (tfRunning) return;
+    if (tfRunning) { socket.emit('tf-full'); return; }
+    if (tfPlayers.size >= 4) { socket.emit('tf-full'); return; }
     tfPlayers.set(socket.id, { userId, username, color, taps: 0 });
     socket.emit('tf-join-ack', { color });
     tfBroadcastLobby();
@@ -568,6 +569,49 @@ tfIo.on('connection', socket => {
       if (!tfRunning) tfBroadcastLobby();
     }
   });
+});
+
+// ── Game-switch endpoint — called by platform when admin changes active game ──
+app.post('/api/switch-game', express.json(), (req, res) => {
+  const secret = req.headers['x-api-secret'];
+  if (GAME_API_SECRET && secret !== GAME_API_SECRET) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const { to } = req.body ?? {};
+  console.log(`[switch] switching to ${to}`);
+
+  if (to === 'tap-frenzy') {
+    // Clear Paper.io lobby — tell every connected player the game switched
+    for (const [, wsid] of controllers) {
+      const sock = io.sockets.sockets.get(wsid);
+      if (sock) sock.emit('game-switched', { to });
+    }
+    for (const { socketId } of waitingQueue) {
+      const sock = io.sockets.sockets.get(socketId);
+      if (sock) sock.emit('game-switched', { to });
+    }
+    controllers.clear();
+    lobbyPlayers.clear();
+    waitingQueue.length = 0;
+    if (!gameRunning) io.emit('lobby-update', []);
+    console.log('[switch] Paper.io lobby cleared');
+
+  } else if (to === 'paperio') {
+    // Clear TF lobby — tell every connected TF player the game switched
+    for (const [sockId] of tfPlayers) {
+      const sock = tfIo.sockets.get(sockId);
+      if (sock) sock.emit('tf-game-switched', { to });
+    }
+    tfPlayers.clear();
+    if (tfTimerId) { clearInterval(tfTimerId); tfTimerId = null; }
+    tfRunning     = false;
+    tfSecondsLeft = TF_DURATION;
+    tfIo.emit('tf-lobby-update', { players: [] });
+    console.log('[switch] TF lobby cleared');
+  }
+
+  res.json({ ok: true });
 });
 
 httpServer.listen(PORT, () => {
