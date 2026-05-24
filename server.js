@@ -89,6 +89,12 @@ function pickColor(wantedColor) {
   return COLORS.find(c => !usedColors.has(c)) ?? COLORS[0];
 }
 
+function pickTFColor(wantedColor) {
+  const usedColors = new Set([...tfPlayers.values()].map(p => p.color));
+  if (wantedColor && !usedColors.has(wantedColor)) return wantedColor;
+  return COLORS.find(c => !usedColors.has(c)) ?? COLORS[0];
+}
+
 // ── Mutable game state ───────────────────────────────────────────────────────
 const displays     = new Set();
 const controllers  = new Map();    // slotId → socketId
@@ -290,7 +296,7 @@ async function postScoresToPlatform(activePlayers, total) {
       const res  = await fetch(`${PLATFORM_URL}/api/game/score`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-secret': GAME_API_SECRET },
-        body: JSON.stringify({ userId: p.userId, territory_pct }),
+        body: JSON.stringify({ userId: p.userId, territory_pct, gameSlug: 'paperio' }),
       });
       const text = await res.text();
       console.log(`[platform] ← response ${res.status}: ${text}`);
@@ -504,7 +510,7 @@ function tfEndGame() {
         const res = await fetch(`${PLATFORM_URL}/api/game/score`, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json', 'x-api-secret': GAME_API_SECRET },
-          body:    JSON.stringify({ userId: s.userId, territory_pct: s.points / 10 }),
+          body:    JSON.stringify({ userId: s.userId, territory_pct: s.points / 10, gameSlug: 'tap-frenzy' }),
         });
         console.log(`[tf] score ${s.username}: ${res.status}`);
       } catch (e) {
@@ -534,10 +540,11 @@ tfIo.on('connection', socket => {
     console.log(`[tf] join received: userId=${userId} username=${username} color=${color}`);
     if (tfRunning) { socket.emit('tf-full'); return; }
     if (tfPlayers.size >= 4) { socket.emit('tf-full'); return; }
-    tfPlayers.set(socket.id, { userId, username, color, taps: 0 });
-    socket.emit('tf-join-ack', { color });
+    const assignedColor = pickTFColor(color);
+    tfPlayers.set(socket.id, { userId, username, color: assignedColor, taps: 0 });
+    socket.emit('tf-join-ack', { color: assignedColor });
     tfBroadcastLobby();
-    console.log(`[tf] ${username} joined (${tfPlayers.size} players)`);
+    console.log(`[tf] ${username} joined color=${assignedColor} (${tfPlayers.size} players)`);
   });
 
   socket.on('tf-start-game', () => {

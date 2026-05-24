@@ -157,20 +157,26 @@ ngrok creates a temporary public tunnel to your local server. No deployment need
 
 ## 5. Environment Variables
 
-You can set these before starting the server if needed:
+Copy `.env.example` to `.env` and fill in the values. When deploying to Render, set these in **Environment** → **Environment Variables** in the Render dashboard.
 
-| Variable | Default | Description |
-|---|---|---|
-| `PORT` | `3000` | The port the server listens on |
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `PORT` | No | `3000` | The port the server listens on (Render sets this automatically) |
+| `PLATFORM_URL` | **Yes** | — | Base URL of the Mix Master platform (e.g. `https://mix-master-gray.vercel.app`). Without this, scores are **never saved** after each game. |
+| `GAME_API_SECRET` | **Yes** | — | Shared secret for platform API calls. Must match `GAME_API_SECRET` in the platform's Vercel environment. Generate with `openssl rand -hex 32`. |
 
-**Example — run on a different port:**
+> ⚠️ If `PLATFORM_URL` or `GAME_API_SECRET` are missing, the server logs *"PLATFORM_URL or GAME_API_SECRET not set — scores not saved"* after every game and no leaderboard entries are recorded.
+
+**Example — run locally with platform integration:**
 ```bash
-PORT=8080 node server.js
+PLATFORM_URL=https://mix-master-gray.vercel.app GAME_API_SECRET=your_secret node server.js
 ```
 
 On Windows (PowerShell):
 ```powershell
-$env:PORT = "8080"; node server.js
+$env:PLATFORM_URL = "https://mix-master-gray.vercel.app"
+$env:GAME_API_SECRET = "your_secret"
+node server.js
 ```
 
 ---
