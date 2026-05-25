@@ -40,7 +40,7 @@
     .lb-row.gold { background:rgba(255,215,0,.12); box-shadow:0 0 8px rgba(255,215,0,.3); }
     .lb-rank  { font-family:'Permanent Marker',cursive; font-size:1.15rem; min-width:22px; text-align:center; }
     .lb-swatch{ width:16px; height:16px; border-radius:4px; flex-shrink:0; }
-    .lb-name  { flex:1; font-family:'Boogaloo',sans-serif; font-size:1rem; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .lb-name  { flex:1; font-family:'Boogaloo',sans-serif; }
     .lb-pct   { font-family:'Permanent Marker',cursive; font-size:1rem; }
 
     /* ── Lobby overlay ── */
@@ -48,9 +48,15 @@
       position:absolute; inset:0; z-index:10;
       background:rgba(14,14,14,.94);
       display:flex; flex-direction:column;
-      align-items:center; justify-content:center; gap:18px;
+      align-items:center; justify-content:center; gap:28px;
     }
-    #lobby-logo { width:min(320px,60vw); height:auto; filter:drop-shadow(0 0 28px rgba(0,229,255,.45)); }
+    #lobby-logo {
+      width: min(420px, 80vw);
+      height: auto;
+      filter: drop-shadow(0 0 28px rgba(0,229,255,.45));
+    }
+    #lobby { gap:18px; }
+    #lobby-logo { width:min(320px,60vw); }
     #player-slots { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 
     /* ── Player slot cards ── */
@@ -61,14 +67,20 @@
     }
     .slot.connected { border-color:var(--c); box-shadow:0 0 16px var(--c); }
     .slot-label { font-family:'Permanent Marker',cursive; font-size:1.05rem; }
+
+    /* ── QR code wrapper ── */
     .qr-wrap {
       position:relative; border-radius:8px; overflow:hidden;
       border:3px solid var(--c); background:#fff; flex-shrink:0;
     }
     .qr-wrap canvas, .qr-wrap img { display:block; }
+
+    /* ── Connected overlay shown on top of QR ── */
     .qr-overlay {
-      position:absolute; inset:0; background:rgba(0,0,0,.88);
-      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
+      position:absolute; inset:0;
+      background:rgba(0,0,0,.88);
+      display:flex; flex-direction:column;
+      align-items:center; justify-content:center; gap:4px;
     }
     .qr-overlay.hidden { display:none; }
     .qr-check { font-size:2.6rem; line-height:1; }
@@ -99,27 +111,6 @@
       padding:8px 14px; border-radius:8px; background:rgba(255,255,255,.07);
       font-family:'Boogaloo',sans-serif; font-size:1.1rem;
     }
-    #play-again-btn {
-      font-family:'Permanent Marker',cursive; font-size:1.4rem;
-      padding:12px 38px; border:none; border-radius:12px; cursor:pointer;
-      background:#76FF03; color:#111; margin-top:8px;
-      box-shadow:0 0 22px rgba(118,255,3,.5); transition:transform .12s, box-shadow .12s;
-    }
-    #play-again-btn:hover  { transform:scale(1.06); box-shadow:0 0 32px rgba(118,255,3,.75); }
-    #play-again-btn:active { transform:scale(.97); }
-
-    /* ── 3-2-1-GO Countdown overlay ── */
-    #countdown-overlay {
-      position:absolute; inset:0; z-index:12;
-      background:rgba(8,8,8,.75);
-      display:none; flex-direction:column;
-      align-items:center; justify-content:center;
-    }
-    #countdown-number {
-      font-family:'Permanent Marker',cursive; font-size:14rem; line-height:1;
-      color:#fff; text-shadow:0 0 80px currentColor;
-      transition: transform .15s ease, opacity .15s ease;
-    }
   </style>
 </head>
 <body>
@@ -131,6 +122,7 @@
       <div id="lobby">
         <img src="/mixMaster.png" id="lobby-logo" alt="Mix Master" />
         <div id="player-slots">
+
           <div class="slot" id="slot-0" style="--c:#FF2D78">
             <div class="slot-label" style="color:#FF2D78">PLAYER 1</div>
             <div class="qr-wrap">
@@ -141,6 +133,7 @@
               </div>
             </div>
           </div>
+
           <div class="slot" id="slot-1" style="--c:#00E5FF">
             <div class="slot-label" style="color:#00E5FF">PLAYER 2</div>
             <div class="qr-wrap">
@@ -151,6 +144,7 @@
               </div>
             </div>
           </div>
+
           <div class="slot" id="slot-2" style="--c:#76FF03">
             <div class="slot-label" style="color:#76FF03">PLAYER 3</div>
             <div class="qr-wrap">
@@ -161,6 +155,7 @@
               </div>
             </div>
           </div>
+
           <div class="slot" id="slot-3" style="--c:#FF6D00">
             <div class="slot-label" style="color:#FF6D00">PLAYER 4</div>
             <div class="qr-wrap">
@@ -171,6 +166,7 @@
               </div>
             </div>
           </div>
+
         </div>
         <button id="start-btn">START GAME</button>
       </div>
@@ -179,12 +175,6 @@
         <h1>GAME OVER</h1>
         <div id="winner-line"></div>
         <div id="final-scores"></div>
-        <button id="play-again-btn">PLAY AGAIN 🎨</button>
-      </div>
-
-      <!-- 3-2-1-GO countdown shown before game loop starts -->
-      <div id="countdown-overlay">
-        <div id="countdown-number">3</div>
       </div>
     </div>
 
