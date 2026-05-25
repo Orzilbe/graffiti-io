@@ -9,6 +9,8 @@ const timerEl = document.getElementById('timer');
 const lbEl    = document.getElementById('leaderboard');
 const sidebar = document.getElementById('sidebar');
 const lbTitle = document.getElementById('sidebar-title');
+const cdOverlay = document.getElementById('countdown-overlay');
+const cdNumber  = document.getElementById('countdown-number');
 
 // When embedded inside the platform iframe, hide the lobby overlay immediately.
 // The platform's /display page handles the lobby UI itself.
@@ -43,24 +45,22 @@ async function initQRCodes() {
                 correctLevel: QRCode.CorrectLevel.H,
             });
         }
-    } catch (_) { /* /qrcodes not configured — QR slots stay empty */ }
+    } catch (_) {}
 }
 initQRCodes();
 
 // ── Socket events ──────────────────────────────────────────────────────────
 socket.emit('display-join');
 
-// Full state on connect — seeds the local grid copy.
+// Full grid on connect — baseline for delta patching
 socket.on('game-state-full', s => {
-    gs = {
-        running:   s.running,  gridW: s.gridW,  gridH: s.gridH,
-        timeLeft:  s.timeLeft, players: s.players,
-        territory: s.territory, trailGrid: s.trailGrid,
-    };
+    gs = { running: s.running, gridW: s.gridW, gridH: s.gridH,
+        timeLeft: s.timeLeft, players: s.players,
+        territory: s.territory, trailGrid: s.trailGrid };
     computeDrips();
 });
 
-// Delta tick — patch only changed cells into our local grid.
+// Delta tick — patch only changed cells
 socket.on('game-state', s => {
     checkDeaths(gs, s);
     const td = s.terrDelta;
@@ -83,12 +83,27 @@ socket.on('player-left', ({ slotId }) => {
 });
 socket.on('leaderboard-update', board => updateLeaderboard(board));
 
+// ── Countdown: server sends 3,2,1,0 ("GO!") before game-start ────────────
+const CD_COLORS = { 3:'#FF2D78', 2:'#00E5FF', 1:'#76FF03', 0:'#FFD600' };
+socket.on('game-countdown', ({ count }) => {
+    lobbyEl.style.display = 'none';
+    cdOverlay.style.display = 'flex';
+    cdNumber.textContent   = count === 0 ? 'GO!' : count;
+    cdNumber.style.color   = CD_COLORS[count] ?? '#fff';
+    cdNumber.style.textShadow = `0 0 80px ${CD_COLORS[count] ?? '#fff'}`;
+    // Animate: scale up briefly then back
+    cdNumber.style.transform = 'scale(1.3)';
+    cdNumber.style.opacity   = '1';
+    setTimeout(() => { cdNumber.style.transform = 'scale(1)'; }, 120);
+});
+
 socket.on('game-start', () => {
     particles = []; drips = [];
     rowMap.clear(); lbEl.innerHTML = '';
-    lobbyEl.style.display = 'none';
-    timerEl.style.display = 'block';
-    goEl.style.display    = 'none';
+    cdOverlay.style.display = 'none';
+    lobbyEl.style.display   = 'none';
+    timerEl.style.display   = 'block';
+    goEl.style.display      = 'none';
 });
 
 socket.on('game-end', ({ winner, scores }) => {
@@ -101,7 +116,6 @@ socket.on('game-end', ({ winner, scores }) => {
         .join('');
     goEl.style.display = 'flex';
 
-    // Notify Mix Master platform when embedded in an iframe
     if (window.parent !== window) {
         window.parent.postMessage({
             type:   'mix-master-game-end',
@@ -111,11 +125,35 @@ socket.on('game-end', ({ winner, scores }) => {
     }
 });
 
+// Play Again — server resets lobby, all connected players stay in
+socket.on('lobby-reset', () => {
+    goEl.style.display      = 'none';
+    cdOverlay.style.display = 'none';
+    timerEl.style.display   = 'none';
+    lobbyEl.style.display   = 'flex';
+    rowMap.clear(); lbEl.innerHTML = '';
+    particles = []; drips = [];
+});
+
 document.getElementById('start-btn').addEventListener('click', () => socket.emit('game-start'));
+document.getElementById('play-again-btn').addEventListener('click', () => socket.emit('play-again'));
+
+socket.on('scores-saved', ({ count }) => {
+    const toast = document.createElement('div');
+    toast.textContent = `✓ ${count} score${count !== 1 ? 's' : ''} saved`;
+    Object.assign(toast.style, {
+        position: 'fixed', bottom: '28px', left: '50%', transform: 'translateX(-50%)',
+        background: 'rgba(118,255,3,.18)', border: '2px solid #76FF03',
+        color: '#76FF03', fontFamily: "'Boogaloo', sans-serif", fontSize: '1.15rem',
+        padding: '10px 26px', borderRadius: '10px', zIndex: '99',
+        backdropFilter: 'blur(6px)', opacity: '1', transition: 'opacity 0.6s',
+    });
+    document.body.appendChild(toast);
+    setTimeout(() => { toast.style.opacity = '0'; }, 2800);
+    setTimeout(() => toast.remove(), 3400);
+});
 
 // ── Force-end button — always visible bottom-right ────────────────────────
-// FIX: was ?admin=true URL gated and also pointed at the wrong page.
-// Now always present on the graffiti-io /display page.
 (function() {
     const btn = document.createElement('button');
     btn.textContent = '⏹ End Game';
@@ -286,18 +324,52 @@ function buildBrick(w, h) {
 }
 
 // ── Grid pixel renderer ────────────────────────────────────────────────────
+// Territory: semi-transparent fill so the brick texture shows through.
+// Trail: fully opaque + bright, with a 1-cell white outline so it's
+//        clearly visible even when inside your own territory color.
 function renderGrid() {
     const { territory, trailGrid, gridW: gw, gridH: gh } = gs;
     if (!territory.length) return;
     if (terrOff.width !== gw)  { terrOff.width  = trailOff.width  = gw; }
     if (terrOff.height !== gh) { terrOff.height = trailOff.height = gh; }
+
     const tc = terrOff.getContext('2d'),  tImg = tc.createImageData(gw, gh);
     const rc = trailOff.getContext('2d'), rImg = rc.createImageData(gw, gh);
+
     for (let i = 0, n = gw * gh; i < n; i++) {
         const to = territory[i], ro = trailGrid[i];
-        if (to >= 0) { const [r,g,b]=RGB[to]; tImg.data[i*4]=r;tImg.data[i*4+1]=g;tImg.data[i*4+2]=b;tImg.data[i*4+3]=148; }
-        if (ro >= 0) { const [r,g,b]=RGB[ro]; rImg.data[i*4]=r;rImg.data[i*4+1]=g;rImg.data[i*4+2]=b;rImg.data[i*4+3]=215; }
+        // Territory — same as before, semi-transparent
+        if (to >= 0) {
+            const [r,g,b] = RGB[to];
+            tImg.data[i*4]=r; tImg.data[i*4+1]=g; tImg.data[i*4+2]=b; tImg.data[i*4+3]=148;
+        }
+        // Trail — fully opaque bright color
+        if (ro >= 0) {
+            const [r,g,b] = RGB[ro];
+            rImg.data[i*4]=r; rImg.data[i*4+1]=g; rImg.data[i*4+2]=b; rImg.data[i*4+3]=255;
+        }
     }
+
+    // White outline around trail cells — iterate trail pixels, paint neighbours
+    // white if they are empty (no trail).  Done in rImg before putImageData.
+    for (let y = 0; y < gh; y++) {
+        for (let x = 0; x < gw; x++) {
+            const i = y * gw + x;
+            if (trailGrid[i] < 0) continue;          // not a trail cell — skip
+            // Check 4 neighbours
+            for (const [nx, ny] of [[x-1,y],[x+1,y],[x,y-1],[x,y+1]]) {
+                if (nx < 0 || nx >= gw || ny < 0 || ny >= gh) continue;
+                const ni = ny * gw + nx;
+                if (trailGrid[ni] >= 0) continue;       // neighbour is also trail — skip
+                // Paint neighbour white (semi) as outline
+                rImg.data[ni*4]   = 255;
+                rImg.data[ni*4+1] = 255;
+                rImg.data[ni*4+2] = 255;
+                rImg.data[ni*4+3] = Math.max(rImg.data[ni*4+3], 160);
+            }
+        }
+    }
+
     tc.putImageData(tImg, 0, 0); rc.putImageData(rImg, 0, 0);
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(terrOff,  0, 0, canvas.width, canvas.height);
@@ -305,24 +377,53 @@ function renderGrid() {
 }
 
 // ── Spray-can sprite ────────────────────────────────────────────────────────
+// Each player gets:
+//   1. A soft glow halo (shadowBlur) so they're visible over their territory
+//   2. A white outline stroke around the body so they pop on any background
 function renderPlayers() {
     const { players, gridW: gw, gridH: gh } = gs;
     if (!players.length) return;
     const cw = canvas.width / gw, ch = canvas.height / gh;
+
     for (const p of players) {
         if (!p || !p.alive) continue;
-        const cx = (p.x + .5) * cw, cy = (p.y + .5) * ch;
-        const r  = Math.min(cw, ch) * .68;
+        const cx  = (p.x + .5) * cw, cy = (p.y + .5) * ch;
+        const r   = Math.min(cw, ch) * .68;
         const ang = { right:0, down:Math.PI/2, left:Math.PI, up:-Math.PI/2 }[p.dir] ?? 0;
-        ctx.save(); ctx.translate(cx, cy); ctx.rotate(ang);
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(ang);
+
+        // ── Glow halo ────────────────────────────────────────────────────────
+        ctx.shadowColor = p.color;
+        ctx.shadowBlur  = r * 2.2;
+
+        // ── Body ─────────────────────────────────────────────────────────────
         ctx.fillStyle = p.color;
-        ctx.beginPath(); ctx.ellipse(0,0,r*.52,r*.74,0,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(0, 0, r*.52, r*.74, 0, 0, Math.PI*2); ctx.fill();
+
+        // White outline around body
+        ctx.shadowBlur  = 0;
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.lineWidth   = r * 0.12;
+        ctx.beginPath(); ctx.ellipse(0, 0, r*.52, r*.74, 0, 0, Math.PI*2); ctx.stroke();
+
+        // ── Nozzle cap ───────────────────────────────────────────────────────
         ctx.fillStyle = '#ddd';
-        ctx.beginPath(); ctx.ellipse(0,-r*.58,r*.24,r*.19,0,0,Math.PI*2); ctx.fill();
-        ctx.fillStyle = p.color+'bb';
-        ctx.beginPath(); ctx.ellipse(0,-r*.88,r*.09,r*.18,0,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(0, -r*.58, r*.24, r*.19, 0, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+        ctx.lineWidth   = r * 0.07;
+        ctx.beginPath(); ctx.ellipse(0, -r*.58, r*.24, r*.19, 0, 0, Math.PI*2); ctx.stroke();
+
+        // ── Nozzle tip ───────────────────────────────────────────────────────
+        ctx.fillStyle = p.color + 'bb';
+        ctx.beginPath(); ctx.ellipse(0, -r*.88, r*.09, r*.18, 0, 0, Math.PI*2); ctx.fill();
+
+        // ── Highlight ────────────────────────────────────────────────────────
         ctx.fillStyle = 'rgba(255,255,255,.22)';
-        ctx.beginPath(); ctx.ellipse(-r*.16,-r*.1,r*.13,r*.3,-.3,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(-r*.16, -r*.1, r*.13, r*.3, -.3, 0, Math.PI*2); ctx.fill();
+
         ctx.restore();
     }
 }
