@@ -24,16 +24,6 @@ app.get('/display',     (_, res) => res.sendFile(path.join(__dirname, 'public/di
 app.get('/controller',  (_, res) => res.sendFile(path.join(__dirname, 'public/controller.html')));
 app.get('/controller/:id', (_, res) => res.sendFile(path.join(__dirname, 'public/controller.html')));
 
-// ── Tap Frenzy routes ─────────────────────────────────────────────────────────
-app.get('/tap-frenzy/display',    (_, res) =>
-  res.sendFile(path.join(__dirname, 'public/tap-frenzy/display.html')));
-app.get('/tap-frenzy/controller', (_, res) =>
-  res.sendFile(path.join(__dirname, 'public/tap-frenzy/controller.html')));
-app.get('/tap-frenzy/config.js',  (_, res) => {
-  res.type('application/javascript');
-  res.send(`window.TF_PLATFORM_URL = ${JSON.stringify(process.env.PLATFORM_URL || '')};`);
-});
-
 // ── Constants ────────────────────────────────────────────────────────────────
 const PORT            = process.env.PORT            || 3000;
 const PLATFORM_URL    = process.env.PLATFORM_URL    || null;
@@ -81,18 +71,13 @@ function shiftHue(hex, deg) {
   return hslToHex((h + deg) % 360, s, l);
 }
 
-// Always use avatar_config.color; if taken, assign the next available color
-// from the COLORS palette that nobody else in the lobby is using.
-function pickColor(wantedColor) {
+// Use the player's chosen color; fall back to slot color only if none provided.
+// Hue-shifts if another lobby player already has the exact same color.
+function pickColor(wantedColor, slotId) {
   const usedColors = new Set([...lobbyPlayers.values()].map(p => p.color));
-  if (wantedColor && !usedColors.has(wantedColor)) return wantedColor;
-  return COLORS.find(c => !usedColors.has(c)) ?? COLORS[0];
-}
-
-function pickTFColor(wantedColor) {
-  const usedColors = new Set([...tfPlayers.values()].map(p => p.color));
-  if (wantedColor && !usedColors.has(wantedColor)) return wantedColor;
-  return COLORS.find(c => !usedColors.has(c)) ?? COLORS[0];
+  let color = wantedColor || COLORS[slotId];
+  if (usedColors.has(color)) color = shiftHue(color, 40);
+  return color;
 }
 
 // ── Mutable game state ───────────────────────────────────────────────────────
@@ -296,7 +281,7 @@ async function postScoresToPlatform(activePlayers, total) {
       const res  = await fetch(`${PLATFORM_URL}/api/game/score`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-secret': GAME_API_SECRET },
-        body: JSON.stringify({ userId: p.userId, territory_pct, gameSlug: 'paperio' }),
+        body: JSON.stringify({ userId: p.userId, territory_pct }),
       });
       const text = await res.text();
       console.log(`[platform] ← response ${res.status}: ${text}`);
@@ -332,7 +317,7 @@ function promoteFromQueue() {
     const sock = io.sockets.sockets.get(pd.socketId);
     if (!sock || !sock.connected) continue; // disconnected while waiting
 
-    const color = pickColor(pd.wantedColor);
+    const color = pickColor(pd.wantedColor, slotId);
     console.log(`[queue] promoted ${pd.username} → slot=${slotId} wantedColor=${pd.wantedColor} → assigned=${color}`);
     controllers.set(slotId, sock.id);
     sock.data = { slotId, name: pd.username, userId: pd.userId,
@@ -341,7 +326,6 @@ function promoteFromQueue() {
                                 avatarUrl: pd.avatarUrl, avatarConfig: pd.avatarConfig, color });
 
     sock.emit('promoted-to-player', { slotId, color });
-    sock.emit('color-assigned', { color });
     io.emit('lobby-update', [...lobbyPlayers.values()]);
     io.to([...displays]).emit('player-joined', { slotId, name: pd.username, color,
                                                   avatarUrl: pd.avatarUrl,
@@ -377,10 +361,10 @@ io.on('connection', socket => {
   });
 
   // ── Platform lobby join (new flow) ────────────────────────────────────────
-  socket.on('lobby-join', ({ userId, username, avatarUrl, avatarConfig }) => {
+  socket.on('lobby-join', ({ userId, username, avatarUrl, avatarConfig, color: clientColor }) => {
     const cfg = avatarConfig ?? null;
-    const wantedColor = cfg?.color;  // always derive from avatar_config
-    console.log(`[lobby] join received: userId=${userId} username=${username} wantedColor=${wantedColor} hasAvatarConfig=${!!cfg}`);
+    // color sent explicitly by client → avatarConfig.color → slot fallback
+    const wantedColor = clientColor || cfg?.color;
 
     // If game is running → queue for next round and notify client
     if (gameRunning) {
@@ -410,14 +394,13 @@ io.on('connection', socket => {
       return;
     }
 
-    const color = pickColor(wantedColor);
-    console.log(`[lobby] slot=${slotId} user=${username} avatarColor=${wantedColor} → assigned=${color}`);
+    const color = pickColor(wantedColor, slotId);
+    console.log(`[lobby] slot=${slotId} user=${username} clientColor=${clientColor} avatarColor=${cfg?.color} → assigned=${color}`);
     controllers.set(slotId, socket.id);
     socket.data = { slotId, name: username, userId, avatarUrl, avatarConfig: cfg, color };
     lobbyPlayers.set(socket.id, { slotId, userId, username, avatarUrl, avatarConfig: cfg, color });
 
     socket.emit('lobby-join-ack', { slotId, color, username, avatarUrl, avatarConfig: cfg });
-    socket.emit('color-assigned', { color });
     io.emit('lobby-update', [...lobbyPlayers.values()]);
     io.to([...displays]).emit('player-joined', { slotId, name: username, color, avatarUrl, avatarConfig: cfg });
   });
@@ -469,163 +452,8 @@ io.on('connection', socket => {
   });
 });
 
-// ── Tap Frenzy namespace ──────────────────────────────────────────────────────
-const tfIo       = io.of('/tap-frenzy');
-const TF_POINTS  = [1000, 600, 300, 100];
-const TF_DURATION = 30;
-
-let tfDisplays    = new Set();
-let tfPlayers     = new Map();   // socketId → { userId, username, color, taps }
-let tfRunning     = false;
-let tfTimerId     = null;
-let tfSecondsLeft = TF_DURATION;
-
-function tfBroadcastLobby() {
-  const players = [...tfPlayers.values()].map(
-    ({ userId, username, color, taps }) => ({ userId, username, color, taps })
-  );
-  tfIo.emit('tf-lobby-update', { players });
-}
-
-function tfEndGame() {
-  if (tfTimerId) { clearInterval(tfTimerId); tfTimerId = null; }
-  tfRunning = false;
-
-  const sorted = [...tfPlayers.values()].sort((a, b) => b.taps - a.taps);
-  const scores = sorted.map((p, i) => ({
-    userId:   p.userId,
-    username: p.username,
-    color:    p.color,
-    taps:     p.taps,
-    points:   TF_POINTS[i] ?? TF_POINTS[TF_POINTS.length - 1],
-  }));
-
-  tfIo.emit('tf-game-end', { scores });
-  console.log('[tf] ended:', scores.map(s => `${s.username}=${s.taps}t/${s.points}pts`).join(', '));
-
-  if (PLATFORM_URL && GAME_API_SECRET) {
-    scores.forEach(async s => {
-      if (!s.userId) return;
-      try {
-        const res = await fetch(`${PLATFORM_URL}/api/game/score`, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json', 'x-api-secret': GAME_API_SECRET },
-          body:    JSON.stringify({ userId: s.userId, territory_pct: s.points / 10, gameSlug: 'tap-frenzy' }),
-        });
-        console.log(`[tf] score ${s.username}: ${res.status}`);
-      } catch (e) {
-        console.log(`[tf] score post failed ${s.username}:`, e.message);
-      }
-    });
-  }
-
-  setTimeout(() => {
-    tfPlayers.clear();
-    tfSecondsLeft = TF_DURATION;
-    tfIo.emit('tf-lobby-reset');
-    tfBroadcastLobby();
-    console.log('[tf] lobby reset');
-  }, 10_000);
-}
-
-tfIo.on('connection', socket => {
-  console.log('[tf+]', socket.id);
-
-  socket.on('tf-display-join', () => {
-    tfDisplays.add(socket.id);
-    tfBroadcastLobby();
-  });
-
-  socket.on('tf-player-join', ({ userId, username, color }) => {
-    console.log(`[tf] join received: userId=${userId} username=${username} color=${color}`);
-    if (tfRunning) { socket.emit('tf-full'); return; }
-    if (tfPlayers.size >= 4) { socket.emit('tf-full'); return; }
-    const assignedColor = pickTFColor(color);
-    tfPlayers.set(socket.id, { userId, username, color: assignedColor, taps: 0 });
-    socket.emit('tf-join-ack', { color: assignedColor });
-    tfBroadcastLobby();
-    console.log(`[tf] ${username} joined color=${assignedColor} (${tfPlayers.size} players)`);
-  });
-
-  socket.on('tf-start-game', () => {
-    if (tfRunning || tfPlayers.size < 2) return;
-    tfRunning     = true;
-    tfSecondsLeft = TF_DURATION;
-    for (const p of tfPlayers.values()) p.taps = 0;
-    tfIo.emit('tf-game-start', { duration: TF_DURATION });
-    console.log('[tf] started with', tfPlayers.size, 'players');
-
-    tfTimerId = setInterval(() => {
-      tfSecondsLeft--;
-      tfIo.emit('tf-timer', { secondsLeft: tfSecondsLeft });
-      if (tfSecondsLeft <= 0) tfEndGame();
-    }, 1_000);
-  });
-
-  socket.on('tf-tap', () => {
-    if (!tfRunning) return;
-    const p = tfPlayers.get(socket.id);
-    if (!p) return;
-    p.taps++;
-    tfIo.emit('tf-tap-update', { playerId: p.userId, count: p.taps });
-  });
-
-  socket.on('disconnect', () => {
-    console.log('[tf-]', socket.id);
-    tfDisplays.delete(socket.id);
-    if (tfPlayers.has(socket.id)) {
-      tfPlayers.delete(socket.id);
-      if (!tfRunning) tfBroadcastLobby();
-    }
-  });
-});
-
-// ── Game-switch endpoint — called by platform when admin changes active game ──
-app.post('/api/switch-game', express.json(), (req, res) => {
-  const secret = req.headers['x-api-secret'];
-  if (GAME_API_SECRET && secret !== GAME_API_SECRET) {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
-
-  const { to } = req.body ?? {};
-  console.log(`[switch] switching to ${to}`);
-
-  if (to === 'tap-frenzy') {
-    // Clear Paper.io lobby — tell every connected player the game switched
-    for (const [, wsid] of controllers) {
-      const sock = io.sockets.sockets.get(wsid);
-      if (sock) sock.emit('game-switched', { to });
-    }
-    for (const { socketId } of waitingQueue) {
-      const sock = io.sockets.sockets.get(socketId);
-      if (sock) sock.emit('game-switched', { to });
-    }
-    controllers.clear();
-    lobbyPlayers.clear();
-    waitingQueue.length = 0;
-    if (!gameRunning) io.emit('lobby-update', []);
-    console.log('[switch] Paper.io lobby cleared');
-
-  } else if (to === 'paperio') {
-    // Clear TF lobby — tell every connected TF player the game switched
-    for (const [sockId] of tfPlayers) {
-      const sock = tfIo.sockets.get(sockId);
-      if (sock) sock.emit('tf-game-switched', { to });
-    }
-    tfPlayers.clear();
-    if (tfTimerId) { clearInterval(tfTimerId); tfTimerId = null; }
-    tfRunning     = false;
-    tfSecondsLeft = TF_DURATION;
-    tfIo.emit('tf-lobby-update', { players: [] });
-    console.log('[switch] TF lobby cleared');
-  }
-
-  res.json({ ok: true });
-});
-
 httpServer.listen(PORT, () => {
   console.log(`Mix Master  →  http://localhost:${PORT}`);
   console.log(`  Display     →  http://localhost:${PORT}/display`);
-  console.log(`  Tap Frenzy  →  http://localhost:${PORT}/tap-frenzy/display`);
   if (PLATFORM_URL) console.log(`  Platform    →  ${PLATFORM_URL}`);
 });
