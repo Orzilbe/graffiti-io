@@ -33,10 +33,9 @@ terrOff.height = trailOff.height = 60;
 // ── QR codes — generated once on page load ────────────────────────────────
 async function initQRCodes() {
     try {
-        const urls = await fetch('/qrcodes').then(r => {
-            if (!r.ok) throw new Error('no qrcodes endpoint');
-            return r.json();
-        });
+        const r = await fetch('/qrcodes');
+        if (!r.ok) return;
+        const urls = await r.json();
         for (let i = 0; i < 4; i++) {
             new QRCode(document.getElementById(`qr-${i}`), {
                 text: urls[i], width: 180, height: 180,
@@ -51,39 +50,24 @@ initQRCodes();
 // ── Socket events ──────────────────────────────────────────────────────────
 socket.emit('display-join');
 
-// Full state — received once on connect (seeds our local grid copy).
-// All subsequent ticks use deltas only.
+// Full state on connect — seeds the local grid copy.
 socket.on('game-state-full', s => {
     gs = {
-        running:   s.running,
-        gridW:     s.gridW,
-        gridH:     s.gridH,
-        timeLeft:  s.timeLeft,
-        players:   s.players,
-        territory: s.territory,
-        trailGrid: s.trailGrid,
+        running:   s.running,  gridW: s.gridW,  gridH: s.gridH,
+        timeLeft:  s.timeLeft, players: s.players,
+        territory: s.territory, trailGrid: s.trailGrid,
     };
     computeDrips();
 });
 
-// Delta tick — received every 50ms during a game.
-// terrDelta/trailDelta are flat arrays: [idx, val, idx, val, ...]
-// We patch our local grid in-place — no allocation, no full copy.
+// Delta tick — patch only changed cells into our local grid.
 socket.on('game-state', s => {
     checkDeaths(gs, s);
-
     const td = s.terrDelta;
-    for (let i = 0, len = td.length; i < len; i += 2)
-        gs.territory[td[i]] = td[i + 1];
-
+    for (let i = 0, len = td.length; i < len; i += 2) gs.territory[td[i]] = td[i+1];
     const trd = s.trailDelta;
-    for (let i = 0, len = trd.length; i < len; i += 2)
-        gs.trailGrid[trd[i]] = trd[i + 1];
-
-    gs.running  = s.running;
-    gs.timeLeft = s.timeLeft;
-    gs.players  = s.players;
-
+    for (let i = 0, len = trd.length; i < len; i += 2) gs.trailGrid[trd[i]] = trd[i+1];
+    gs.running = s.running; gs.timeLeft = s.timeLeft; gs.players = s.players;
     if (td.length > 0) computeDrips();
 });
 
@@ -129,22 +113,24 @@ socket.on('game-end', ({ winner, scores }) => {
 
 document.getElementById('start-btn').addEventListener('click', () => socket.emit('game-start'));
 
-// ── Admin kill switch — only visible when ?admin=true in URL ──────────────
-if (new URLSearchParams(location.search).get('admin') === 'true') {
+// ── Force-end button — always visible bottom-right ────────────────────────
+// FIX: was ?admin=true URL gated and also pointed at the wrong page.
+// Now always present on the graffiti-io /display page.
+(function() {
     const btn = document.createElement('button');
-    btn.textContent = '⏹ Force End Game';
+    btn.textContent = '⏹ End Game';
     Object.assign(btn.style, {
-        position: 'fixed', top: '12px', right: '12px', zIndex: '999',
-        background: 'rgba(255,45,120,.85)', border: '2px solid #FF2D78',
+        position: 'fixed', bottom: '16px', right: '16px', zIndex: '999',
+        background: 'rgba(255,45,120,.15)', border: '2px solid rgba(255,45,120,.5)',
         color: '#fff', fontFamily: "'Boogaloo', sans-serif", fontSize: '1rem',
-        padding: '8px 18px', borderRadius: '10px', cursor: 'pointer',
-        backdropFilter: 'blur(6px)',
+        padding: '8px 16px', borderRadius: '10px', cursor: 'pointer',
+        backdropFilter: 'blur(6px)', transition: 'background .15s',
     });
-    btn.onclick = () => {
-        if (confirm('Force end the current game?')) socket.emit('force-end-game');
-    };
+    btn.onmouseenter = () => btn.style.background = 'rgba(255,45,120,.55)';
+    btn.onmouseleave = () => btn.style.background = 'rgba(255,45,120,.15)';
+    btn.onclick = () => { if (confirm('Force end the current game?')) socket.emit('force-end-game'); };
     document.body.appendChild(btn);
-}
+})();
 
 socket.on('scores-saved', ({ count }) => {
     const toast = document.createElement('div');

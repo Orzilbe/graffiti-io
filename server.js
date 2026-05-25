@@ -12,8 +12,6 @@ const ALLOWED_ORIGINS = [
 ];
 const io = new Server(httpServer, {
     cors: { origin: ALLOWED_ORIGINS, methods: ['GET', 'POST'] },
-    // Keep polling+websocket — Render/Cloudflare needs polling for the upgrade handshake.
-    // Disable per-message compression: adds CPU + latency with no benefit for small game packets.
     perMessageDeflate: false,
 });
 
@@ -96,13 +94,9 @@ let gameRunning = false;
 let startTime   = 0;
 let tick        = 0;
 let loopId      = null;
-
-// ── Delta tracking ────────────────────────────────────────────────────────
-// Sends only changed cells each tick instead of the full 6000-cell grids.
-// prevTerritory/prevTrail are snapshots from the previous tick for diffing.
 let prevTerritory = [];
 let prevTrail     = [];
-let lbTick        = 0;   // throttle leaderboard broadcasts to ~5 fps
+let lbTick        = 0;
 
 // ── Grid helpers ─────────────────────────────────────────────────────────────
 const newGrid = ()      => new Array(GW * GH).fill(-1);
@@ -204,12 +198,7 @@ function gameTick() {
     }
 
     const total = GW * GH;
-
-    // ── Build deltas — only send what changed this tick ───────────────────
-    // Format: flat array [index, value, index, value, ...]
-    // On a quiet tick this might be 4 entries instead of 6000.
-    const terrDelta  = [];
-    const trailDelta = [];
+    const terrDelta = [], trailDelta = [];
     for (let i = 0, len = GW * GH; i < len; i++) {
         if (territory[i] !== prevTerritory[i]) terrDelta.push(i, territory[i]);
         if (trailGrid[i] !== prevTrail[i])     trailDelta.push(i, trailGrid[i]);
@@ -229,7 +218,6 @@ function gameTick() {
         trailDelta,
     });
 
-    // Leaderboard at ~5 fps (every 4 ticks = 200ms) — no need to push 20×/sec
     if (++lbTick % 4 === 0) {
         const board = players.filter(Boolean)
             .sort((a, b) => b.terrCount - a.terrCount)
@@ -373,8 +361,6 @@ io.on('connection', socket => {
         const total = GW * GH;
         socket.emit('lobby-update', [...lobbyPlayers.values()]);
         if (gameRunning) socket.emit('game-start');
-        // Full state on connect — client uses this as its grid baseline.
-        // After this, only deltas are sent each tick.
         socket.emit('game-state-full', {
             tick, running: gameRunning, gridW: GW, gridH: GH,
             timeLeft: gameRunning ? Math.max(0, GAME_MS - (Date.now() - startTime)) : 0,
@@ -453,10 +439,8 @@ io.on('connection', socket => {
 
     socket.on('game-start', () => { if (!gameRunning) startGame(); });
 
-    // ── Admin kill switch — ends game immediately ─────────────────────────
-    // Triggered from display page with ?admin=true via the Force End button.
     socket.on('force-end-game', () => {
-        console.log('[admin] force-end-game received from', socket.id);
+        console.log('[admin] force-end-game from', socket.id);
         if (gameRunning) endGame();
     });
 
