@@ -12,6 +12,10 @@ const lbTitle = document.getElementById('sidebar-title');
 const cdOverlay = document.getElementById('countdown-overlay');
 const cdNumber = document.getElementById('countdown-number');
 
+// Sidebar Early Match Termination elements
+const adminActionsEl = document.getElementById('admin-actions');
+const forceEndBtn = document.getElementById('platform-force-end-btn');
+
 const isEmbed = new URLSearchParams(location.search).get('embed') === '1';
 if (isEmbed) {
     lobbyEl.style.display = 'none';
@@ -141,10 +145,17 @@ socket.on('game-start', () => {
     if (!isEmbed) lobbyEl.style.display = 'none';
     timerEl.style.display = 'block';
     if (!isEmbed) goEl.style.display = 'none';
+
+    // Disclose early termination button panel inside the active iframe container
+    if (adminActionsEl) adminActionsEl.style.display = 'block';
 });
 
 socket.on('game-end', ({winner, scores}) => {
     timerEl.style.display = 'none';
+
+    // Conceal early termination layout to make room for final scoring assets
+    if (adminActionsEl) adminActionsEl.style.display = 'none';
+
     if (isEmbed) return;
 
     const wl = document.getElementById('winner-line');
@@ -159,6 +170,8 @@ socket.on('game-end', ({winner, scores}) => {
 socket.on('lobby-reset', () => {
     cdOverlay.style.display = 'none';
     timerEl.style.display = 'none';
+    if (adminActionsEl) adminActionsEl.style.display = 'none';
+
     if (!isEmbed) {
         goEl.style.display = 'none';
         lobbyEl.style.display = 'flex';
@@ -444,6 +457,17 @@ function resizeCanvas() {
     canvas.width = canvas.parentElement.clientWidth;
     canvas.height = canvas.parentElement.clientHeight;
     brickBg = buildBrick(canvas.width, canvas.height);
+}
+
+// Wire up termination click emitter interactions
+if (forceEndBtn) {
+    forceEndBtn.onmouseenter = () => forceEndBtn.style.background = 'rgba(255,45,120,0.45)';
+    forceEndBtn.onmouseleave = () => forceEndBtn.style.background = 'rgba(255,45,120,0.12)';
+    forceEndBtn.onclick = () => {
+        if (confirm('Force end the current match early?')) {
+            socket.emit('force-end-game');
+        }
+    };
 }
 
 window.addEventListener('resize', resizeCanvas);
