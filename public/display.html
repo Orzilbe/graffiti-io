@@ -110,11 +110,15 @@
 
         /* ── 3-2-1-GO Countdown overlay ── */
         #countdown-overlay {
-            position:absolute; inset:0; z-index:12;
-            background:rgba(8,8,8,.75);
-            display:none; flex-direction:column;
-            align-items:center; justify-content:center;
-            pointer-events:none;
+            position: absolute;
+            inset: 0;
+            z-index: 9999; /* Boosted up so it absolutely sits above everything in the iframe */
+            background: rgba(8, 8, 8, 0.85); /* Slightly darker so it covers the empty brick canvas setup */
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
         }
         #countdown-number {
             font-family:'Permanent Marker',cursive; font-size:14rem; line-height:1;

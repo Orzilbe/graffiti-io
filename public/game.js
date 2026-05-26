@@ -110,6 +110,8 @@ socket.on('leaderboard-update', board => updateLeaderboard(board));
 const CD_COLORS = {3: '#FF2D78', 2: '#00E5FF', 1: '#76FF03', 0: '#FFD600'};
 socket.on('game-countdown', ({count}) => {
     // Hide lobby/gameover only in standalone mode — embed already hid them.
+    resizeCanvas();
+
     if (!isEmbed) {
         lobbyEl.style.display = 'none';
         goEl.style.display = 'none';
