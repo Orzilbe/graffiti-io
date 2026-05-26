@@ -385,19 +385,7 @@ async function endGame() {
         return;
     }
 
-    if (countdownId) {
-        clearInterval(countdownId);
-        countdownId = null;
-    }
-    if (countdownTo) {
-        clearTimeout(countdownTo);
-        countdownTo = null;
-    }
-    if (loopId) {
-        clearInterval(loopId);
-        loopId = null;
-    }
-
+    clearAllTimers();
     gameRunning = false;
     gamePhase = 'ended';
 
@@ -545,7 +533,6 @@ function promoteFromQueue() {
 io.on('connection', socket => {
     console.log('[+]', socket.id);
 
-    // NEW: Handle embedded layout verification confirmation
     socket.on('display-ready', () => {
         if (gamePhase === 'countdown' && !embedReadyReceived) {
             console.log(`[game] Iframe layout confirmed by connection ${socket.id}. Kicking off countdown sequence.`);
@@ -648,8 +635,11 @@ io.on('connection', socket => {
     });
 
     socket.on('force-end-game', () => {
-        console.log('[admin] force-end-game from', socket.id);
-        if (gamePhase === 'countdown' || gamePhase === 'playing') endGame();
+        console.log('[admin] force-end-game handling triggered from connection', socket.id);
+        if (gamePhase === 'countdown' || gamePhase === 'playing' || gamePhase === 'ended') {
+            endGame();
+            autoResetToLobby();
+        }
     });
 
     socket.on('play-again', () => {
@@ -673,17 +663,25 @@ io.on('connection', socket => {
         }
 
         let wasActive = false;
-        for (const [sid, wsid] of controllers) {
+        for (const [slotId, wsid] of controllers) {
             if (wsid === socket.id) {
-                controllers.delete(sid);
-                io.to([...displays]).emit('player-left', {slotId: sid});
+                controllers.delete(slotId);
+                io.to([...displays]).emit('player-left', {slotId: sid = slotId});
                 wasActive = true;
                 break;
             }
         }
 
-        if (wasActive && !gameRunning) promoteFromQueue();
-        if (!gameRunning) io.emit('lobby-update', [...lobbyPlayers.values()]);
+        // AUTO-TERMINATION CHECK: If the game loop is active, check if all active mobile controls left
+        if ((gamePhase === 'playing' || gamePhase === 'countdown') && controllers.size === 0) {
+            console.log('[game] All active controllers disconnected mid-match. Auto-terminating match pipeline.');
+            endGame();
+            autoResetToLobby();
+            return;
+        }
+
+        if (wasActive && gamePhase === 'lobby') promoteFromQueue();
+        if (gamePhase === 'lobby') io.emit('lobby-update', [...lobbyPlayers.values()]);
     });
 });
 
