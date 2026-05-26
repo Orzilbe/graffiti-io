@@ -231,14 +231,14 @@ function gameTick() {
 
 function startGame() {
     territory = newGrid(); trailGrid = newGrid(); tick = 0;
-    gameRunning = true; startTime = Date.now();
+    startTime = Date.now();
     players = [0,1,2,3].map(i => {
         const sid  = controllers.get(i);
         if (!sid) return null;
         const sock   = io.sockets.sockets.get(sid);
         const name   = sock?.data?.name   || `P${i+1}`;
         const userId = sock?.data?.userId || null;
-        const color  = sock?.data?.color  || COLORS[i]; // color stored at lobby-join time
+        const color  = sock?.data?.color  || COLORS[i];
         return makePlayer(i, name, userId, color);
     });
     players.forEach(p => { if (p) giveSpawnZone(p); });
@@ -246,10 +246,28 @@ function startGame() {
     prevTerritory = territory.slice();
     prevTrail     = trailGrid.slice();
     lbTick        = 0;
-    if (loopId) clearInterval(loopId);
-    loopId = setInterval(gameTick, TICK_MS);
-    io.emit('game-start');
-    console.log('[game] started with', players.filter(Boolean).length, 'players');
+
+    // ── 3-2-1-GO countdown ────────────────────────────────────────────────
+    // gameRunning stays FALSE during countdown so player input is ignored
+    // and the display-join handler won't send a premature game-start.
+    let count = 3;
+    io.emit('game-countdown', { count });
+
+    const cdId = setInterval(() => {
+        count--;
+        io.emit('game-countdown', { count });
+        if (count <= 0) {
+            clearInterval(cdId);
+            setTimeout(() => {
+                gameRunning = true;
+                startTime   = Date.now();   // clock starts NOW, not during countdown
+                if (loopId) clearInterval(loopId);
+                loopId = setInterval(gameTick, TICK_MS);
+                io.emit('game-start');
+                console.log('[game] started with', players.filter(Boolean).length, 'players');
+            }, 800);
+        }
+    }, 1000);
 }
 
 async function endGame() {
@@ -442,6 +460,31 @@ io.on('connection', socket => {
     socket.on('force-end-game', () => {
         console.log('[admin] force-end-game from', socket.id);
         if (gameRunning) endGame();
+    });
+
+    // Play Again — keep all connected players, reset to lobby
+    socket.on('play-again', () => {
+        if (gameRunning) return; // ignore if game still running
+        console.log('[lobby] play-again requested');
+        // Players stay connected — just reset game state and show lobby
+        territory = newGrid(); trailGrid = newGrid();
+        players   = [null, null, null, null];
+        // Re-seat controllers back into player slots
+        for (const [slotId, socketId] of controllers) {
+            const sock = io.sockets.sockets.get(socketId);
+            if (!sock || !sock.connected) { controllers.delete(slotId); continue; }
+            // Re-emit player-joined so display shows their card again
+            io.to([...displays]).emit('player-joined', {
+                slotId,
+                name:        sock.data?.name        ?? `P${slotId+1}`,
+                color:       sock.data?.color       ?? COLORS[slotId],
+                avatarUrl:   sock.data?.avatarUrl   ?? null,
+                avatarConfig: sock.data?.avatarConfig ?? null,
+            });
+        }
+        io.emit('lobby-reset');
+        io.emit('lobby-update', [...lobbyPlayers.values()]);
+        console.log('[lobby] reset for play-again, controllers:', controllers.size);
     });
 
     socket.on('disconnect', () => {
