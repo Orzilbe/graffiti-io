@@ -12,9 +12,6 @@ const lbTitle = document.getElementById('sidebar-title');
 const cdOverlay = document.getElementById('countdown-overlay');
 const cdNumber = document.getElementById('countdown-number');
 
-// When embedded in the platform iframe, hide both lobby + game-over overlays.
-// The platform's /display page owns those screens; the iframe is only the
-// canvas + 3-2-1 countdown.
 const isEmbed = new URLSearchParams(location.search).get('embed') === '1';
 if (isEmbed) {
     lobbyEl.style.display = 'none';
@@ -24,7 +21,6 @@ if (isEmbed) {
 const COLORS = ['#FF2D78', '#00E5FF', '#76FF03', '#FF6D00'];
 const RGB = COLORS.map(h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]);
 
-// ── State ──────────────────────────────────────────────────────────────────
 let gs = {running: false, players: [], territory: [], trailGrid: [], gridW: 100, gridH: 60, timeLeft: 0};
 let brickBg = null;
 let particles = [];
@@ -36,7 +32,6 @@ const trailOff = document.createElement('canvas');
 terrOff.width = trailOff.width = 100;
 terrOff.height = trailOff.height = 60;
 
-// ── QR codes — generated once on page load (standalone only) ──────────────
 async function initQRCodes() {
     try {
         const r = await fetch('/qrcodes');
@@ -62,6 +57,13 @@ if (!isEmbed) initQRCodes();
 
 // ── Socket events ──────────────────────────────────────────────────────────
 socket.emit('display-join');
+
+// Emit readiness signal once layout engine baseline runs
+if (isEmbed) {
+    setTimeout(() => {
+        socket.emit('display-ready');
+    }, 100);
+}
 
 socket.on('game-state-full', s => {
     gs = {
@@ -106,10 +108,8 @@ socket.on('player-left', ({slotId}) => {
 
 socket.on('leaderboard-update', board => updateLeaderboard(board));
 
-// ── Countdown: server emits 3,2,1,0 then game-start fires ────────────────
 const CD_COLORS = {3: '#FF2D78', 2: '#00E5FF', 1: '#76FF03', 0: '#FFD600'};
 socket.on('game-countdown', ({count}) => {
-    // Hide lobby/gameover only in standalone mode — embed already hid them.
     resizeCanvas();
 
     if (!isEmbed) {
@@ -127,7 +127,6 @@ socket.on('game-countdown', ({count}) => {
     cdNumber.style.textShadow = `0 0 100px ${color}, 0 0 40px ${color}`;
     cdNumber.textContent = label;
 
-    // Force reflow so transition fires
     cdNumber.getBoundingClientRect();
     cdNumber.style.transition = 'transform 0.7s ease-out';
     cdNumber.style.transform = 'scale(1)';
@@ -146,8 +145,6 @@ socket.on('game-start', () => {
 
 socket.on('game-end', ({winner, scores}) => {
     timerEl.style.display = 'none';
-
-    // When embedded, the platform parent renders game-over UI. Stay silent.
     if (isEmbed) return;
 
     const wl = document.getElementById('winner-line');
@@ -159,9 +156,6 @@ socket.on('game-end', ({winner, scores}) => {
     goEl.style.display = 'flex';
 });
 
-// Play Again — server clears state and emits lobby-reset.
-// CRITICAL: when embedded, NEVER show the iframe's own lobby (the QR-code
-// screen). That was the "QR codes appearing inside the game area" bug.
 socket.on('lobby-reset', () => {
     cdOverlay.style.display = 'none';
     timerEl.style.display = 'none';
@@ -175,7 +169,6 @@ socket.on('lobby-reset', () => {
     drips = [];
 });
 
-// Buttons only exist in standalone HTML; guard with optional chaining.
 document.getElementById('start-btn')?.addEventListener('click', () => socket.emit('game-start'));
 document.getElementById('play-again-btn')?.addEventListener('click', () => socket.emit('play-again'));
 
@@ -206,7 +199,6 @@ socket.on('scores-saved', ({count}) => {
     setTimeout(() => toast.remove(), 3400);
 });
 
-// ── Force-end button — standalone only ────────────────────────────────────
 if (!isEmbed) {
     const btn = document.createElement('button');
     btn.textContent = '⏹ End Game';
@@ -234,7 +226,6 @@ if (!isEmbed) {
     document.body.appendChild(btn);
 }
 
-// ── Leaderboard — FLIP rank-slide animation ────────────────────────────────
 function updateLeaderboard(board) {
     for (const p of board) {
         if (rowMap.has(p.id)) continue;
@@ -276,7 +267,6 @@ function updateLeaderboard(board) {
     }
 }
 
-// ── Death detection ────────────────────────────────────────────────────────
 function checkDeaths(prev, curr) {
     if (!prev.players.length) return;
     for (const p of curr.players) {
@@ -328,7 +318,6 @@ function renderParticles() {
     ctx.globalAlpha = 1;
 }
 
-// ── Brick wall (built once per resize) ────────────────────────────────────
 function buildBrick(w, h) {
     const off = Object.assign(document.createElement('canvas'), {width: w, height: h});
     const c = off.getContext('2d');
@@ -346,11 +335,6 @@ function buildBrick(w, h) {
     return off;
 }
 
-// ── Grid pixel renderer ────────────────────────────────────────────────────
-// FIX: removed the 1-cell white outline drawn around every trail cell.
-// At our grid scale (100×60 upscaled to ~2400px) one "cell" = ~24px on
-// screen, so the outline looked like a chunky white border around the
-// pink/cyan trails. Trail fill alone (alpha 255) reads clearly enough.
 function renderGrid() {
     const {territory, trailGrid, gridW: gw, gridH: gh} = gs;
     if (!territory.length) return;
@@ -394,10 +378,6 @@ function renderGrid() {
     ctx.drawImage(trailOff, 0, 0, canvas.width, canvas.height);
 }
 
-// ── Spray-can sprite ────────────────────────────────────────────────────────
-// FIX: removed the 2px white stroke that wrapped the spray-can body.
-// The colored glow + nozzle cap highlight separate the sprite from the
-// trail visually without the heavy outline that looked harsh at scale.
 function renderPlayers() {
     const {players, gridW: gw, gridH: gh} = gs;
     if (!players.length) return;
@@ -413,11 +393,9 @@ function renderPlayers() {
         ctx.translate(cx, cy);
         ctx.rotate(ang);
 
-        // Glow so the sprite reads against the trail.
         ctx.shadowColor = p.color;
         ctx.shadowBlur = r * 1.2;
 
-        // Body fill
         ctx.fillStyle = p.color;
         ctx.beginPath();
         ctx.ellipse(0, 0, r * .52, r * .74, 0, 0, Math.PI * 2);
@@ -425,19 +403,16 @@ function renderPlayers() {
 
         ctx.shadowBlur = 0;
 
-        // Nozzle cap
         ctx.fillStyle = '#ddd';
         ctx.beginPath();
         ctx.ellipse(0, -r * .58, r * .24, r * .19, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // Nozzle tip
         ctx.fillStyle = p.color + 'bb';
         ctx.beginPath();
         ctx.ellipse(0, -r * .88, r * .09, r * .18, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // Highlight
         ctx.fillStyle = 'rgba(255,255,255,.22)';
         ctx.beginPath();
         ctx.ellipse(-r * .16, -r * .1, r * .13, r * .3, -.3, 0, Math.PI * 2);
@@ -447,13 +422,11 @@ function renderPlayers() {
     }
 }
 
-// ── Timer ──────────────────────────────────────────────────────────────────
 const fmtTime = ms => {
     const s = Math.ceil(ms / 1000);
     return `${~~(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 
-// ── Render loop (60 fps) ───────────────────────────────────────────────────
 function render() {
     if (brickBg) ctx.drawImage(brickBg, 0, 0); else {
         ctx.fillStyle = '#111';
@@ -466,8 +439,8 @@ function render() {
     requestAnimationFrame(render);
 }
 
-// ── Resize ─────────────────────────────────────────────────────────────────
 function resizeCanvas() {
+    if (!canvas.parentElement) return;
     canvas.width = canvas.parentElement.clientWidth;
     canvas.height = canvas.parentElement.clientHeight;
     brickBg = buildBrick(canvas.width, canvas.height);

@@ -85,8 +85,6 @@ function shiftHue(hex, deg) {
     return hslToHex((h + deg) % 360, s, l);
 }
 
-// Use the player's chosen color; fall back to slot color only if none provided.
-// Hue-shifts if another lobby player already has the exact same color.
 function pickColor(wantedColor, slotId) {
     const usedColors = new Set([...lobbyPlayers.values()].map(p => p.color));
     let color = wantedColor || COLORS[slotId];
@@ -110,11 +108,8 @@ let loopId = null;
 let prevTerritory = [];
 let prevTrail = [];
 let lbTick = 0;
+let embedReadyReceived = false;
 
-// ── NEW: phase tracking + timer/interval handles ──────────────────────────────
-// Why: previous code tracked only `gameRunning`. We need to distinguish
-// "lobby" from "counting down" so play-again can't fire mid-countdown,
-// and we need handles to all live timers so we can cancel them cleanly.
 let gamePhase = 'lobby';   // 'lobby' | 'countdown' | 'playing' | 'ended'
 let countdownId = null;      // setInterval handle for the 3-2-1 ticker
 let countdownTo = null;      // setTimeout handle for the 800ms GO → start delay
@@ -294,8 +289,6 @@ function gameTick() {
     if (timeLeft === 0) endGame();
 }
 
-// ── NEW: central cleanup. Cancels every timer/interval the game owns. ─────────
-// Called by startGame, endGame, and play-again to guarantee a clean slate.
 function clearAllTimers() {
     if (loopId) {
         clearInterval(loopId);
@@ -316,8 +309,6 @@ function clearAllTimers() {
 }
 
 function startGame() {
-    // Guard: refuse to start if a round is already counting down or running.
-    // Without this, double-clicks on Start Game would queue overlapping countdowns.
     if (gamePhase === 'countdown' || gamePhase === 'playing') {
         console.log('[game] startGame ignored — phase already', gamePhase);
         return;
@@ -325,6 +316,7 @@ function startGame() {
 
     clearAllTimers();
     gamePhase = 'countdown';
+    embedReadyReceived = false;
 
     territory = newGrid();
     trailGrid = newGrid();
@@ -339,23 +331,37 @@ function startGame() {
         const color = sock?.data?.color || COLORS[i];
         return makePlayer(i, name, userId, color);
     });
-    players.forEach(p => {
-        if (p) giveSpawnZone(p);
-    });
+    players.forEach(p => { if (p) giveSpawnZone(p); });
     calcTerritory();
     prevTerritory = territory.slice();
     prevTrail = trailGrid.slice();
     lbTick = 0;
 
-    // ── 3-2-1-GO countdown ────────────────────────────────────────────────
-    // gameRunning stays FALSE during countdown so player input is ignored
-    // and the display-join handler won't send a premature game-start.
+    io.emit('game-countdown', { count: 3 });
+
+    const embeddedModeActive = [...displays].length > 0 && PLATFORM_URL;
+
+    if (!embeddedModeActive) {
+        runCountdownSequence();
+    } else {
+        countdownTo = setTimeout(() => {
+            if (gamePhase === 'countdown' && !embedReadyReceived) {
+                console.log('[game] Iframe ready timeout hit, forcing countdown sequence');
+                runCountdownSequence();
+            }
+        }, 1500);
+    }
+}
+
+function runCountdownSequence() {
+    if (countdownId) clearInterval(countdownId);
+
     let count = 3;
-    io.emit('game-countdown', {count});
+    io.emit('game-countdown', { count });
 
     countdownId = setInterval(() => {
         count--;
-        io.emit('game-countdown', {count});
+        io.emit('game-countdown', { count });
         if (count <= 0) {
             clearInterval(countdownId);
             countdownId = null;
@@ -363,7 +369,7 @@ function startGame() {
                 countdownTo = null;
                 gameRunning = true;
                 gamePhase = 'playing';
-                startTime = Date.now();   // clock starts NOW, not during countdown
+                startTime = Date.now();
                 if (loopId) clearInterval(loopId);
                 loopId = setInterval(gameTick, TICK_MS);
                 io.emit('game-start');
@@ -374,13 +380,11 @@ function startGame() {
 }
 
 async function endGame() {
-    // Guard: don't end twice.
     if (gamePhase === 'ended' || gamePhase === 'lobby') {
         console.log('[game] endGame ignored — phase already', gamePhase);
         return;
     }
 
-    // Cancel any in-flight countdown (e.g. force-end-game during countdown).
     if (countdownId) {
         clearInterval(countdownId);
         countdownId = null;
@@ -414,17 +418,12 @@ async function endGame() {
         await postScoresToPlatform(activePlayers, total);
     }
 
-    // Auto-reset to lobby after 8s if nobody hits Play Again.
-    // We KEEP a handle so play-again can cancel it.
     endResetTo = setTimeout(() => {
         endResetTo = null;
         autoResetToLobby();
     }, 8000);
 }
 
-// ── NEW: separated auto-reset behaviour for endGame's timeout ────────────────
-// This is the OLD behaviour of the inline setTimeout: clear everything and
-// promote queue. Used when nobody clicks Play Again.
 function autoResetToLobby() {
     controllers.clear();
     lobbyPlayers.clear();
@@ -438,17 +437,11 @@ function autoResetToLobby() {
     console.log('[lobby] auto-reset to lobby (8s timeout)');
 }
 
-// ── NEW: play-again reset. Keeps connected controllers, clears game state. ───
-// This is what runs when someone clicks Play Again BEFORE the 8s auto-reset
-// fires. We must cancel that auto-reset or it'll wipe the controllers we just
-// kept and the player will end up in an empty lobby.
 function playAgainReset() {
-    // Cancel the pending auto-reset — this is the key bug fix.
     if (endResetTo) {
         clearTimeout(endResetTo);
         endResetTo = null;
     }
-    // Cancel any lingering loops just in case.
     clearAllTimers();
 
     gamePhase = 'lobby';
@@ -459,8 +452,6 @@ function playAgainReset() {
     prevTerritory = [];
     prevTrail = [];
 
-    // Re-seat each connected controller as a lobby player and notify displays
-    // so the standalone /display lobby (and platform's lobby) show them again.
     for (const [slotId, socketId] of [...controllers]) {
         const sock = io.sockets.sockets.get(socketId);
         if (!sock || !sock.connected) {
@@ -508,8 +499,6 @@ async function postScoresToPlatform(activePlayers, total) {
     if (saved > 0) io.to([...displays]).emit('scores-saved', {count: saved});
 }
 
-// ── Queue helpers ─────────────────────────────────────────────────────────────
-
 function broadcastQueuePositions() {
     waitingQueue.forEach((p, i) => {
         const sock = io.sockets.sockets.get(p.socketId);
@@ -527,7 +516,7 @@ function promoteFromQueue() {
         broadcastQueuePositions();
 
         const sock = io.sockets.sockets.get(pd.socketId);
-        if (!sock || !sock.connected) continue; // disconnected while waiting
+        if (!sock || !sock.connected) continue;
 
         const color = pickColor(pd.wantedColor, slotId);
         console.log(`[queue] promoted ${pd.username} → slot=${slotId} wantedColor=${pd.wantedColor} → assigned=${color}`);
@@ -553,11 +542,19 @@ function promoteFromQueue() {
     }
 }
 
-// ── Socket events ─────────────────────────────────────────────────────────────
 io.on('connection', socket => {
     console.log('[+]', socket.id);
 
-    // ── Display screen ────────────────────────────────────────────────────────
+    // NEW: Handle embedded layout verification confirmation
+    socket.on('display-ready', () => {
+        if (gamePhase === 'countdown' && !embedReadyReceived) {
+            console.log(`[game] Iframe layout confirmed by connection ${socket.id}. Kicking off countdown sequence.`);
+            embedReadyReceived = true;
+            if (countdownTo) clearTimeout(countdownTo);
+            runCountdownSequence();
+        }
+    });
+
     socket.on('display-join', () => {
         displays.add(socket.id);
         const total = GW * GH;
@@ -586,12 +583,10 @@ io.on('connection', socket => {
         });
     });
 
-    // ── Platform lobby join (new flow) ────────────────────────────────────────
     socket.on('lobby-join', ({userId, username, avatarUrl, avatarConfig, color: clientColor}) => {
         const cfg = avatarConfig ?? null;
         const wantedColor = clientColor || cfg?.color;
 
-        // If game is running → queue for next round and notify client
         if (gameRunning) {
             if (!waitingQueue.find(p => p.socketId === socket.id)) {
                 waitingQueue.push({socketId: socket.id, userId, username, avatarUrl, avatarConfig: cfg, wantedColor});
@@ -603,12 +598,10 @@ io.on('connection', socket => {
             return;
         }
 
-        // Find first free slot
         const usedSlots = new Set(controllers.keys());
         const slotId = [0, 1, 2, 3].find(i => !usedSlots.has(i));
 
         if (slotId === undefined) {
-            // All slots taken → add to queue
             if (!waitingQueue.find(p => p.socketId === socket.id)) {
                 waitingQueue.push({socketId: socket.id, userId, username, avatarUrl, avatarConfig: cfg, wantedColor});
                 socket.data = {name: username, userId, avatarUrl, avatarConfig: cfg, inQueue: true};
@@ -630,7 +623,6 @@ io.on('connection', socket => {
         io.to([...displays]).emit('player-joined', {slotId, name: username, color, avatarUrl, avatarConfig: cfg});
     });
 
-    // ── Legacy join (direct /controller/0-3 URL, no platform) ────────────────
     socket.on('player-join', ({slotId, name}) => {
         if (slotId < 0 || slotId > 3) return;
         controllers.set(slotId, socket.id);
@@ -647,7 +639,6 @@ io.on('connection', socket => {
         if (p?.alive) p.pendingDir = direction;
     });
 
-    // Start: guard with phase check. Multiple sockets clicking won't double-start.
     socket.on('game-start', () => {
         if (gamePhase !== 'lobby') {
             console.log('[game] game-start ignored — phase is', gamePhase);
@@ -658,12 +649,9 @@ io.on('connection', socket => {
 
     socket.on('force-end-game', () => {
         console.log('[admin] force-end-game from', socket.id);
-        // Allow force-end from any non-lobby phase (covers countdown stuck states).
         if (gamePhase === 'countdown' || gamePhase === 'playing') endGame();
     });
 
-    // Play Again — keep connected controllers, reset game state.
-    // Guards: only valid after the game ended; idempotent on rapid double-clicks.
     socket.on('play-again', () => {
         if (gamePhase !== 'ended') {
             console.log('[lobby] play-again ignored — phase is', gamePhase);
@@ -678,14 +666,12 @@ io.on('connection', socket => {
         displays.delete(socket.id);
         lobbyPlayers.delete(socket.id);
 
-        // Remove from queue if they were waiting
         const qi = waitingQueue.findIndex(p => p.socketId === socket.id);
         if (qi >= 0) {
             waitingQueue.splice(qi, 1);
             broadcastQueuePositions();
         }
 
-        // Remove from active players; promote from queue if a lobby slot opened
         let wasActive = false;
         for (const [sid, wsid] of controllers) {
             if (wsid === socket.id) {
