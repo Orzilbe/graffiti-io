@@ -565,6 +565,7 @@ io.on('connection', socket => {
     });
 
     socket.on('lobby-join', ({userId, username, avatarUrl, avatarConfig, color: clientColor}) => {
+        console.log('[server] received color:', clientColor, 'avatarConfig color:', avatarConfig?.color);
         const cfg = avatarConfig ?? null;
         const wantedColor = clientColor || cfg?.color;
 
