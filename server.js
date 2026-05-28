@@ -46,50 +46,30 @@ const OPP = {up: 'down', down: 'up', left: 'right', right: 'left'};
 const DVEC = {up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0]};
 
 // ── Color helpers ─────────────────────────────────────────────────────────────
-function hexToHSL(hex) {
-    const r = parseInt(hex.slice(1, 3), 16) / 255, g = parseInt(hex.slice(3, 5), 16) / 255,
-        b = parseInt(hex.slice(5, 7), 16) / 255;
-    const max = Math.max(r, g, b), min = Math.min(r, g, b);
-    let h = 0, s = 0;
-    const l = (max + min) / 2;
-    if (max !== min) {
-        const d = max - min;
-        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-        switch (max) {
-            case r:
-                h = (g - b) / d + (g < b ? 6 : 0);
-                break;
-            case g:
-                h = (b - r) / d + 2;
-                break;
-            case b:
-                h = (r - g) / d + 4;
-                break;
-        }
-        h /= 6;
-    }
-    return {h: h * 360, s: s * 100, l: l * 100};
+function darkenColor(hex, factor) {
+    const r = Math.round(parseInt(hex.slice(1, 3), 16) * factor);
+    const g = Math.round(parseInt(hex.slice(3, 5), 16) * factor);
+    const b = Math.round(parseInt(hex.slice(5, 7), 16) * factor);
+    return '#' + [r, g, b].map(v => Math.min(255, v).toString(16).padStart(2, '0')).join('');
 }
 
-function hslToHex(h, s, l) {
-    s /= 100;
-    l /= 100;
-    const k = n => (n + h / 30) % 12;
-    const a = s * Math.min(l, 1 - l);
-    const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
-    return '#' + [0, 8, 4].map(n => Math.round(f(n) * 255).toString(16).padStart(2, '0')).join('');
-}
-
-function shiftHue(hex, deg) {
-    const {h, s, l} = hexToHSL(hex);
-    return hslToHex((h + deg) % 360, s, l);
+function lightenColor(hex, factor) {
+    const r = Math.round(parseInt(hex.slice(1, 3), 16) + (255 - parseInt(hex.slice(1, 3), 16)) * factor);
+    const g = Math.round(parseInt(hex.slice(3, 5), 16) + (255 - parseInt(hex.slice(3, 5), 16)) * factor);
+    const b = Math.round(parseInt(hex.slice(5, 7), 16) + (255 - parseInt(hex.slice(5, 7), 16)) * factor);
+    return '#' + [r, g, b].map(v => Math.min(255, v).toString(16).padStart(2, '0')).join('');
 }
 
 function pickColor(wantedColor, slotId) {
     const usedColors = new Set([...lobbyPlayers.values()].map(p => p.color));
-    let color = wantedColor || COLORS[slotId];
-    if (usedColors.has(color)) color = shiftHue(color, 40);
-    return color;
+    const base = wantedColor || COLORS[slotId];
+    const shades = [
+        base,
+        darkenColor(base, 0.6),
+        darkenColor(base, 0.4),
+        lightenColor(base, 0.45),
+    ];
+    return shades.find(c => !usedColors.has(c)) ?? shades[3];
 }
 
 // ── Mutable game state ───────────────────────────────────────────────────────
@@ -534,6 +514,7 @@ function promoteFromQueue() {
         });
 
         sock.emit('promoted-to-player', {slotId, color});
+        sock.emit('color-assigned', {color});
         io.emit('lobby-update', [...lobbyPlayers.values()]);
         io.to([...displays]).emit('player-joined', {
             slotId, name: pd.username, color, avatarUrl: pd.avatarUrl, avatarConfig: pd.avatarConfig
@@ -619,6 +600,7 @@ io.on('connection', socket => {
         lobbyPlayers.set(socket.id, {slotId, userId, username, avatarUrl, avatarConfig: cfg, color});
 
         socket.emit('lobby-join-ack', {slotId, color, username, avatarUrl, avatarConfig: cfg});
+        socket.emit('color-assigned', {color});
         io.emit('lobby-update', [...lobbyPlayers.values()]);
         io.to([...displays]).emit('player-joined', {slotId, name: username, color, avatarUrl, avatarConfig: cfg});
     });

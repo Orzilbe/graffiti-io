@@ -131,6 +131,13 @@ socket.on('join-ack', ({ name, color }) => {
     lobbyName.textContent = name;
 });
 
+// ── Color assigned (shade deduplication) ──────────────────────────────────
+socket.on('color-assigned', ({ color }) => {
+    myColor = color;
+    document.documentElement.style.setProperty('--pc', color);
+    hudName.style.color = color;
+});
+
 // ── lobby-join-ack (platform new flow) ────────────────────────────────────
 // FIX: controller.js was NOT handling lobby-join-ack at all.
 // Platform players joined via app/join/page.tsx which has its own socket,
