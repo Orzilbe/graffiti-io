@@ -62,7 +62,7 @@ function lightenColor(hex, factor) {
 
 function pickColor(wantedColor, slotId) {
     const usedColors = new Set([...lobbyPlayers.values()].map(p => p.color));
-    const base = wantedColor || COLORS[slotId];
+    const base = (wantedColor && wantedColor !== '#000000') ? wantedColor : COLORS[slotId];
     const shades = [
         base,
         darkenColor(base, 0.6),
