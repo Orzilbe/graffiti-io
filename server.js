@@ -45,31 +45,9 @@ const SPAWNS = [{x: 15, y: 15, dir: 'right'}, {x: 84, y: 15, dir: 'left'}, {x: 1
 const OPP = {up: 'down', down: 'up', left: 'right', right: 'left'};
 const DVEC = {up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0]};
 
-// ── Color helpers ─────────────────────────────────────────────────────────────
-function darkenColor(hex, factor) {
-    const r = Math.round(parseInt(hex.slice(1, 3), 16) * factor);
-    const g = Math.round(parseInt(hex.slice(3, 5), 16) * factor);
-    const b = Math.round(parseInt(hex.slice(5, 7), 16) * factor);
-    return '#' + [r, g, b].map(v => Math.min(255, v).toString(16).padStart(2, '0')).join('');
-}
-
-function lightenColor(hex, factor) {
-    const r = Math.round(parseInt(hex.slice(1, 3), 16) + (255 - parseInt(hex.slice(1, 3), 16)) * factor);
-    const g = Math.round(parseInt(hex.slice(3, 5), 16) + (255 - parseInt(hex.slice(3, 5), 16)) * factor);
-    const b = Math.round(parseInt(hex.slice(5, 7), 16) + (255 - parseInt(hex.slice(5, 7), 16)) * factor);
-    return '#' + [r, g, b].map(v => Math.min(255, v).toString(16).padStart(2, '0')).join('');
-}
-
-function pickColor(wantedColor, slotId) {
-    const usedColors = new Set([...lobbyPlayers.values()].map(p => p.color));
-    const base = (wantedColor && wantedColor !== '#000000') ? wantedColor : COLORS[slotId];
-    const shades = [
-        base,
-        darkenColor(base, 0.6),
-        darkenColor(base, 0.4),
-        lightenColor(base, 0.45),
-    ];
-    return shades.find(c => !usedColors.has(c)) ?? shades[3];
+// ── Color assignment ──────────────────────────────────────────────────────────
+function pickColor(slotId) {
+    return COLORS[slotId];
 }
 
 // ── Mutable game state ───────────────────────────────────────────────────────
@@ -498,8 +476,8 @@ function promoteFromQueue() {
         const sock = io.sockets.sockets.get(pd.socketId);
         if (!sock || !sock.connected) continue;
 
-        const color = pickColor(pd.wantedColor, slotId);
-        console.log(`[queue] promoted ${pd.username} → slot=${slotId} wantedColor=${pd.wantedColor} → assigned=${color}`);
+        const color = pickColor(slotId);
+        console.log(`[queue] promoted ${pd.username} → slot=${slotId} color=${color}`);
         controllers.set(slotId, sock.id);
         sock.data = {
             slotId, name: pd.username, userId: pd.userId, avatarUrl: pd.avatarUrl, avatarConfig: pd.avatarConfig, color
@@ -564,14 +542,12 @@ io.on('connection', socket => {
         });
     });
 
-    socket.on('lobby-join', ({userId, username, avatarUrl, avatarConfig, color: clientColor}) => {
-        console.log('[server] received color:', clientColor, 'avatarConfig color:', avatarConfig?.color);
+    socket.on('lobby-join', ({userId, username, avatarUrl, avatarConfig}) => {
         const cfg = avatarConfig ?? null;
-        const wantedColor = clientColor || cfg?.color;
 
         if (gameRunning) {
             if (!waitingQueue.find(p => p.socketId === socket.id)) {
-                waitingQueue.push({socketId: socket.id, userId, username, avatarUrl, avatarConfig: cfg, wantedColor});
+                waitingQueue.push({socketId: socket.id, userId, username, avatarUrl, avatarConfig: cfg});
                 socket.data = {name: username, userId, avatarUrl, avatarConfig: cfg, inQueue: true};
             }
             socket.emit('game-in-progress');
@@ -585,7 +561,7 @@ io.on('connection', socket => {
 
         if (slotId === undefined) {
             if (!waitingQueue.find(p => p.socketId === socket.id)) {
-                waitingQueue.push({socketId: socket.id, userId, username, avatarUrl, avatarConfig: cfg, wantedColor});
+                waitingQueue.push({socketId: socket.id, userId, username, avatarUrl, avatarConfig: cfg});
                 socket.data = {name: username, userId, avatarUrl, avatarConfig: cfg, inQueue: true};
             }
             const pos = waitingQueue.findIndex(p => p.socketId === socket.id) + 1;
@@ -594,8 +570,8 @@ io.on('connection', socket => {
             return;
         }
 
-        const color = pickColor(wantedColor, slotId);
-        console.log(`[lobby] slot=${slotId} user=${username} clientColor=${clientColor} avatarColor=${cfg?.color} → assigned=${color}`);
+        const color = pickColor(slotId);
+        console.log(`[lobby] slot=${slotId} user=${username} → color=${color}`);
         controllers.set(slotId, socket.id);
         socket.data = {slotId, name: username, userId, avatarUrl, avatarConfig: cfg, color};
         lobbyPlayers.set(socket.id, {slotId, userId, username, avatarUrl, avatarConfig: cfg, color});
