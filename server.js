@@ -269,6 +269,29 @@ function updateSocketProfile(socket, payload) {
     socket.emit('lobby-join-ack', {slotId, color, username: name, avatarUrl, avatarConfig});
 }
 
+async function refreshSocketProfileFromPlatform(socket) {
+    const userId = socket?.data?.userId;
+    if (!socket || !userId) return;
+
+    const fresh = await fetchPlatformPlayerProfile(userId);
+    if (!fresh) return;
+
+    updateSocketProfile(socket, {
+        userId,
+        username: fresh.username ?? socket.data?.name,
+        avatarUrl: fresh.avatarUrl ?? socket.data?.avatarUrl ?? null,
+        avatarConfig: fresh.avatarConfig ?? socket.data?.avatarConfig ?? null,
+    });
+}
+
+async function refreshAllControllerProfilesFromPlatform() {
+    await Promise.all([...controllers.values()].map(async socketId => {
+        const sock = io.sockets.sockets.get(socketId);
+        if (!sock?.connected) return;
+        await refreshSocketProfileFromPlatform(sock);
+    }));
+}
+
 // ── Mutable game state ───────────────────────────────────────────────────────
 const displays = new Set();
 const controllers = new Map();    // slotId → socketId
@@ -485,7 +508,7 @@ function clearAllTimers() {
     }
 }
 
-function startGame() {
+async function startGame() {
     if (gamePhase === 'countdown' || gamePhase === 'playing') {
         console.log('[game] startGame ignored — phase already', gamePhase);
         return;
@@ -494,6 +517,8 @@ function startGame() {
     clearAllTimers();
     gamePhase = 'countdown';
     embedReadyReceived = false;
+
+    await refreshAllControllerProfilesFromPlatform();
 
     territory = newGrid();
     trailGrid = newGrid();
@@ -732,9 +757,10 @@ io.on('connection', socket => {
         }
     });
 
-    socket.on('display-join', () => {
+    socket.on('display-join', async () => {
         displays.add(socket.id);
         const total = GW * GH;
+        await refreshAllControllerProfilesFromPlatform();
         socket.emit('lobby-update', [...lobbyPlayers.values()]);
         if (gameRunning) socket.emit('game-start');
         socket.emit('game-state-full', {
@@ -868,12 +894,12 @@ io.on('connection', socket => {
         if (p?.alive) p.pendingDir = direction;
     });
 
-    socket.on('game-start', () => {
+    socket.on('game-start', async () => {
         if (gamePhase !== 'lobby') {
             console.log('[game] game-start ignored — phase is', gamePhase);
             return;
         }
-        startGame();
+        await startGame();
     });
 
     socket.on('force-end-game', () => {
