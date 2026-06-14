@@ -34,7 +34,7 @@ const GAME_API_SECRET = process.env.GAME_API_SECRET || null;
 const GW = 100;
 const GH = 60;
 const TICK_MS = 50;
-const GAME_MS = 3 * 60 * 1000;
+const GAME_MS = 2 * 60 * 1000;
 const RESP_T = 60;
 const COLORS = ['#FF2D78', '#00E5FF', '#76FF03', '#FF6D00'];
 const SPAWNS = [{x: 15, y: 15, dir: 'right'}, {x: 84, y: 15, dir: 'left'}, {x: 15, y: 44, dir: 'right'}, {
@@ -363,8 +363,13 @@ async function endGame() {
     const sorted = players.filter(Boolean).sort((a, b) => b.terrCount - a.terrCount);
     const winner = sorted[0];
     io.emit('game-end', {
-        winner: winner ? {id: winner.id, name: winner.name, color: winner.color} : null, scores: sorted.map(p => ({
-            id: p.id, name: p.name, color: p.color, pct: ((p.terrCount / total) * 100).toFixed(1)
+        winner: winner ? {id: winner.id, name: winner.name, color: winner.color} : null,
+        scores: sorted.map((p, index) => ({
+            id: p.id,
+            rank: index + 1,
+            name: p.name,
+            color: p.color,
+            pct: ((p.terrCount / total) * 100).toFixed(1)
         })),
     });
     const activePlayers = players.filter(Boolean);
