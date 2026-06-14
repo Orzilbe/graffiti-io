@@ -3,6 +3,16 @@
 const socket = io();
 const COLORS = ['#FF2D78', '#00E5FF', '#76FF03', '#FF6D00'];
 
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    }[ch]));
+}
+
 // ── Auth mode detection ────────────────────────────────────────────────────
 const params   = new URLSearchParams(location.search);
 const token    = params.get('token');
@@ -27,6 +37,7 @@ const endEl     = document.getElementById('end-screen');
 const errorEl   = document.getElementById('error-screen');
 const cntEl     = document.getElementById('countdown');
 const endWinner = document.getElementById('end-winner');
+const endScores = document.getElementById('end-scores');
 
 // ── State ──────────────────────────────────────────────────────────────────
 // FIX: gameActive was unreliable for platform-joined players.
@@ -194,14 +205,32 @@ socket.on('player-died', ({ respawnIn }) => {
     }, 1000);
 });
 
-socket.on('game-end', ({ winner }) => {
+socket.on('game-end', ({ winner, scores = [] }) => {
     gameActive = false;
     alive      = false;
     clearInterval(respawnIv);
     deathEl.classList.remove('show');
     goEl.classList.remove('show');
 
-    endWinner.textContent = winner ? `${winner.name} wins!` : 'Draw!';
     endWinner.style.color = winner?.color ?? '#fff';
+    endWinner.innerHTML = winner
+        ? `<span class="winner-label">Winner</span><span class="winner-name">${escapeHtml(winner.name)}</span><span class="winner-sub">wins!</span>`
+        : `<span class="winner-name">Draw!</span>`;
+
+    if (endScores) {
+        endScores.innerHTML = scores.map(p => `
+            <div class="end-score-row">
+                <span class="end-score-name" style="color:${p.color}">#${p.rank} ${escapeHtml(p.name)}</span>
+                <span style="color:${p.color}">${p.pct}%</span>
+            </div>
+        `).join('');
+    }
+
     endEl.classList.add('show');
+});
+
+socket.on('session-replaced', () => {
+    gameActive = false;
+    lobbySub.textContent = 'Opened in another tab. Use the newest controller.';
+    lobbyEl.classList.add('show');
 });

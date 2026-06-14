@@ -50,6 +50,190 @@ function pickColor(slotId) {
     return COLORS[slotId];
 }
 
+function safeName(username, fallback = 'Player') {
+    const name = String(username || '').trim();
+    return name ? name.slice(0, 20) : fallback;
+}
+
+function findSlotBySocketId(socketId) {
+    for (const [slotId, sid] of controllers) {
+        if (sid === socketId) return slotId;
+    }
+    return null;
+}
+
+function findSlotByUserId(userId) {
+    if (!userId) return null;
+
+    for (const [slotId, sid] of controllers) {
+        const sock = io.sockets.sockets.get(sid);
+        if (sock?.data?.userId === userId) return slotId;
+
+        const lobbyPlayer = lobbyPlayers.get(sid);
+        if (lobbyPlayer?.userId === userId) return slotId;
+    }
+
+    return null;
+}
+
+function removeFromQueueBySocketId(socketId) {
+    let removed = false;
+    for (let i = waitingQueue.length - 1; i >= 0; i--) {
+        if (waitingQueue[i].socketId === socketId) {
+            waitingQueue.splice(i, 1);
+            removed = true;
+        }
+    }
+    if (removed) broadcastQueuePositions();
+}
+
+function removeFromQueueByUserId(userId) {
+    if (!userId) return;
+    let removed = false;
+    for (let i = waitingQueue.length - 1; i >= 0; i--) {
+        if (waitingQueue[i].userId === userId) {
+            waitingQueue.splice(i, 1);
+            removed = true;
+        }
+    }
+    if (removed) broadcastQueuePositions();
+}
+
+function emitLobbyState() {
+    io.emit('lobby-update', [...lobbyPlayers.values()]);
+}
+
+function sendPlayerJoinedToDisplays(slotId, name, color, avatarUrl, avatarConfig) {
+    io.to([...displays]).emit('player-joined', {
+        slotId,
+        name,
+        color,
+        avatarUrl: avatarUrl ?? null,
+        avatarConfig: avatarConfig ?? null,
+    });
+}
+
+function rebuildLobbyPlayersFromControllers() {
+    lobbyPlayers.clear();
+
+    for (const [slotId, socketId] of [...controllers]) {
+        const sock = io.sockets.sockets.get(socketId);
+        if (!sock || !sock.connected) {
+            controllers.delete(slotId);
+            continue;
+        }
+
+        const name = safeName(sock.data?.name, `P${slotId + 1}`);
+        const color = sock.data?.color ?? pickColor(slotId);
+        const lobbyPlayer = {
+            slotId,
+            userId: sock.data?.userId ?? null,
+            username: name,
+            avatarUrl: sock.data?.avatarUrl ?? null,
+            avatarConfig: sock.data?.avatarConfig ?? null,
+            color,
+        };
+
+        lobbyPlayers.set(socketId, lobbyPlayer);
+        sendPlayerJoinedToDisplays(slotId, name, color, lobbyPlayer.avatarUrl, lobbyPlayer.avatarConfig);
+    }
+}
+
+function assignPlayerSlot(socket, slotId, payload, reason = 'join') {
+    const name = safeName(payload.username, `P${slotId + 1}`);
+    const color = pickColor(slotId);
+    const avatarConfig = payload.avatarConfig ?? null;
+    const avatarUrl = payload.avatarUrl ?? null;
+    const userId = payload.userId ?? null;
+
+    removeFromQueueBySocketId(socket.id);
+    removeFromQueueByUserId(userId);
+
+    const previousSocketId = controllers.get(slotId);
+    if (previousSocketId && previousSocketId !== socket.id) {
+        const previousSocket = io.sockets.sockets.get(previousSocketId);
+        previousSocket?.emit('session-replaced');
+        previousSocket?.disconnect(true);
+        lobbyPlayers.delete(previousSocketId);
+    }
+
+    for (const [otherSlotId, otherSocketId] of [...controllers]) {
+        if (otherSlotId !== slotId && otherSocketId === socket.id) {
+            controllers.delete(otherSlotId);
+        }
+    }
+
+    controllers.set(slotId, socket.id);
+    socket.data = {
+        ...socket.data,
+        slotId,
+        name,
+        userId,
+        avatarUrl,
+        avatarConfig,
+        color,
+        inQueue: false,
+    };
+
+    lobbyPlayers.set(socket.id, {slotId, userId, username: name, avatarUrl, avatarConfig, color});
+
+    if (players[slotId]) {
+        players[slotId].name = name;
+        players[slotId].userId = userId;
+        players[slotId].color = color;
+    }
+
+    socket.emit('lobby-join-ack', {slotId, color, username: name, avatarUrl, avatarConfig});
+    socket.emit('color-assigned', {color});
+    emitLobbyState();
+    sendPlayerJoinedToDisplays(slotId, name, color, avatarUrl, avatarConfig);
+
+    if (gameRunning) socket.emit('game-start');
+    console.log(`[lobby] ${reason}: slot=${slotId} user=${name} color=${color}`);
+}
+
+function updateSocketProfile(socket, payload) {
+    const slotId = socket.data?.slotId;
+    const userId = socket.data?.userId ?? payload.userId ?? null;
+    const name = safeName(payload.username ?? socket.data?.name, slotId != null ? `P${slotId + 1}` : 'Player');
+    const avatarUrl = payload.avatarUrl ?? socket.data?.avatarUrl ?? null;
+    const avatarConfig = payload.avatarConfig ?? socket.data?.avatarConfig ?? null;
+
+    socket.data = {
+        ...socket.data,
+        name,
+        userId,
+        avatarUrl,
+        avatarConfig,
+    };
+
+    if (socket.data?.inQueue) {
+        const queued = waitingQueue.find(p => p.socketId === socket.id);
+        if (queued) {
+            queued.username = name;
+            queued.userId = userId;
+            queued.avatarUrl = avatarUrl;
+            queued.avatarConfig = avatarConfig;
+        }
+        return;
+    }
+
+    if (typeof slotId !== 'number' || controllers.get(slotId) !== socket.id) return;
+
+    const color = socket.data?.color ?? pickColor(slotId);
+    socket.data.color = color;
+    lobbyPlayers.set(socket.id, {slotId, userId, username: name, avatarUrl, avatarConfig, color});
+
+    if (players[slotId]) {
+        players[slotId].name = name;
+        players[slotId].userId = userId;
+    }
+
+    emitLobbyState();
+    sendPlayerJoinedToDisplays(slotId, name, color, avatarUrl, avatarConfig);
+    socket.emit('lobby-join-ack', {slotId, color, username: name, avatarUrl, avatarConfig});
+}
+
 // ── Mutable game state ───────────────────────────────────────────────────────
 const displays = new Set();
 const controllers = new Map();    // slotId → socketId
@@ -388,16 +572,20 @@ async function endGame() {
 }
 
 function autoResetToLobby() {
-    controllers.clear();
-    lobbyPlayers.clear();
+    clearAllTimers();
+    gameRunning = false;
+    gamePhase = 'lobby';
     players = [null, null, null, null];
     territory = newGrid();
     trailGrid = newGrid();
-    gamePhase = 'lobby';
-    io.emit('lobby-update', []);
-    io.emit('lobby-reset');
+    prevTerritory = [];
+    prevTrail = [];
+
+    rebuildLobbyPlayersFromControllers();
     promoteFromQueue();
-    console.log('[lobby] auto-reset to lobby (8s timeout)');
+    io.emit('lobby-reset');
+    emitLobbyState();
+    console.log('[lobby] auto-reset to lobby with connected players:', controllers.size);
 }
 
 function playAgainReset() {
@@ -430,7 +618,7 @@ function playAgainReset() {
         });
     }
     io.emit('lobby-reset');
-    io.emit('lobby-update', [...lobbyPlayers.values()]);
+    emitLobbyState();
     console.log('[lobby] play-again reset, controllers:', controllers.size);
 }
 
@@ -482,26 +670,13 @@ function promoteFromQueue() {
         if (!sock || !sock.connected) continue;
 
         const color = pickColor(slotId);
-        console.log(`[queue] promoted ${pd.username} → slot=${slotId} color=${color}`);
-        controllers.set(slotId, sock.id);
-        sock.data = {
-            slotId, name: pd.username, userId: pd.userId, avatarUrl: pd.avatarUrl, avatarConfig: pd.avatarConfig, color
-        };
-        lobbyPlayers.set(sock.id, {
-            slotId,
+        assignPlayerSlot(sock, slotId, {
             userId: pd.userId,
             username: pd.username,
             avatarUrl: pd.avatarUrl,
             avatarConfig: pd.avatarConfig,
-            color
-        });
-
+        }, 'queue promote');
         sock.emit('promoted-to-player', {slotId, color});
-        sock.emit('color-assigned', {color});
-        io.emit('lobby-update', [...lobbyPlayers.values()]);
-        io.to([...displays]).emit('player-joined', {
-            slotId, name: pd.username, color, avatarUrl: pd.avatarUrl, avatarConfig: pd.avatarConfig
-        });
         console.log(`[queue] promoted ${pd.username} → slot ${slotId}`);
     }
 }
@@ -549,15 +724,28 @@ io.on('connection', socket => {
 
     socket.on('lobby-join', ({userId, username, avatarUrl, avatarConfig}) => {
         const cfg = avatarConfig ?? null;
+        const name = safeName(username, 'Player');
+        const payload = {userId, username: name, avatarUrl: avatarUrl ?? null, avatarConfig: cfg};
 
-        if (gameRunning) {
-            if (!waitingQueue.find(p => p.socketId === socket.id)) {
-                waitingQueue.push({socketId: socket.id, userId, username, avatarUrl, avatarConfig: cfg});
-                socket.data = {name: username, userId, avatarUrl, avatarConfig: cfg, inQueue: true};
+        // Rejoining after editing the avatar, refreshing the phone, or reconnecting
+        // should update the existing slot instead of creating a duplicate stale player.
+        const existingSlot = findSlotBySocketId(socket.id) ?? findSlotByUserId(userId);
+        if (existingSlot !== null) {
+            assignPlayerSlot(socket, existingSlot, payload, 'rejoin/update');
+            return;
+        }
+
+        if (gamePhase !== 'lobby') {
+            if (!waitingQueue.find(p => p.socketId === socket.id || (userId && p.userId === userId))) {
+                waitingQueue.push({socketId: socket.id, userId, username: name, avatarUrl, avatarConfig: cfg});
+                socket.data = {name, userId, avatarUrl, avatarConfig: cfg, inQueue: true};
+            } else {
+                updateSocketProfile(socket, payload);
             }
-            socket.emit('game-in-progress');
-            const pos = waitingQueue.findIndex(p => p.socketId === socket.id) + 1;
+            if (gameRunning) socket.emit('game-in-progress');
+            const pos = waitingQueue.findIndex(p => p.socketId === socket.id || (userId && p.userId === userId)) + 1;
             socket.emit('queue-position', {position: pos, totalWaiting: waitingQueue.length});
+            broadcastQueuePositions();
             return;
         }
 
@@ -565,32 +753,31 @@ io.on('connection', socket => {
         const slotId = [0, 1, 2, 3].find(i => !usedSlots.has(i));
 
         if (slotId === undefined) {
-            if (!waitingQueue.find(p => p.socketId === socket.id)) {
-                waitingQueue.push({socketId: socket.id, userId, username, avatarUrl, avatarConfig: cfg});
-                socket.data = {name: username, userId, avatarUrl, avatarConfig: cfg, inQueue: true};
+            if (!waitingQueue.find(p => p.socketId === socket.id || (userId && p.userId === userId))) {
+                waitingQueue.push({socketId: socket.id, userId, username: name, avatarUrl, avatarConfig: cfg});
+                socket.data = {name, userId, avatarUrl, avatarConfig: cfg, inQueue: true};
+            } else {
+                updateSocketProfile(socket, payload);
             }
-            const pos = waitingQueue.findIndex(p => p.socketId === socket.id) + 1;
+            const pos = waitingQueue.findIndex(p => p.socketId === socket.id || (userId && p.userId === userId)) + 1;
             socket.emit('queue-position', {position: pos, totalWaiting: waitingQueue.length});
             broadcastQueuePositions();
             return;
         }
 
-        const color = pickColor(slotId);
-        console.log(`[lobby] slot=${slotId} user=${username} → color=${color}`);
-        controllers.set(slotId, socket.id);
-        socket.data = {slotId, name: username, userId, avatarUrl, avatarConfig: cfg, color};
-        lobbyPlayers.set(socket.id, {slotId, userId, username, avatarUrl, avatarConfig: cfg, color});
-
-        socket.emit('lobby-join-ack', {slotId, color, username, avatarUrl, avatarConfig: cfg});
-        socket.emit('color-assigned', {color});
-        io.emit('lobby-update', [...lobbyPlayers.values()]);
-        io.to([...displays]).emit('player-joined', {slotId, name: username, color, avatarUrl, avatarConfig: cfg});
+        assignPlayerSlot(socket, slotId, payload, 'join');
     });
+
+    socket.on('lobby-profile-update', ({userId, username, avatarUrl, avatarConfig}) => {
+        if (socket.data?.userId && userId && socket.data.userId !== userId) return;
+        updateSocketProfile(socket, {userId, username, avatarUrl, avatarConfig});
+    });
+
 
     socket.on('player-join', ({slotId, name}) => {
         if (slotId < 0 || slotId > 3) return;
         controllers.set(slotId, socket.id);
-        socket.data = {slotId, name, userId: null};
+        socket.data = {slotId, name, userId: null, avatarUrl: null, avatarConfig: null, color: COLORS[slotId]};
         console.log(`[join-legacy] slot=${slotId} name=${name}`);
         io.to([...displays]).emit('player-joined', {slotId, name, color: COLORS[slotId]});
         socket.emit('join-ack', {slotId, name, color: COLORS[slotId]});
@@ -647,7 +834,7 @@ io.on('connection', socket => {
         }
 
         if (wasActive && !gameRunning) promoteFromQueue();
-        if (!gameRunning) io.emit('lobby-update', [...lobbyPlayers.values()]);
+        if (!gameRunning) emitLobbyState();
     });
 });
 

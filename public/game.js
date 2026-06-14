@@ -25,6 +25,16 @@ if (isEmbed) {
 const COLORS = ['#FF2D78', '#00E5FF', '#76FF03', '#FF6D00'];
 const RGB = COLORS.map(h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]);
 
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    }[ch]));
+}
+
 let gs = {running: false, players: [], territory: [], trailGrid: [], gridW: 100, gridH: 60, timeLeft: 0};
 let brickBg = null;
 let particles = [];
@@ -35,6 +45,28 @@ const terrOff = document.createElement('canvas');
 const trailOff = document.createElement('canvas');
 terrOff.width = trailOff.width = 100;
 terrOff.height = trailOff.height = 60;
+
+function launchResultFireworks() {
+    const layer = document.getElementById('fireworks-layer');
+    if (!layer) return;
+
+    const bursts = [
+        { left: '16%', top: '18%', color: '#FF2D78', delay: 0 },
+        { left: '82%', top: '20%', color: '#00E5FF', delay: 260 },
+        { left: '26%', top: '72%', color: '#76FF03', delay: 520 },
+        { left: '74%', top: '70%', color: '#FF6D00', delay: 780 },
+        { left: '50%', top: '13%', color: '#FFD600', delay: 1040 },
+    ];
+
+    layer.innerHTML = bursts.map((burst, bi) => {
+        const sparks = Array.from({ length: 16 }, (_, i) => {
+            const angle = (360 / 16) * i;
+            const distance = 58 + ((i + bi) % 5) * 11;
+            return `<span class="firework-spark" style="--a:${angle}deg;--d:${distance}px;--c:${burst.color};animation-delay:${burst.delay}ms"></span>`;
+        }).join('');
+        return `<div class="firework" style="left:${burst.left};top:${burst.top};--c:${burst.color};animation-delay:${burst.delay}ms">${sparks}</div>`;
+    }).join('');
+}
 
 async function initQRCodes() {
     try {
@@ -159,10 +191,13 @@ socket.on('game-end', ({winner, scores}) => {
     if (isEmbed) return;
 
     const wl = document.getElementById('winner-line');
-    wl.textContent = winner ? `${winner.name} wins!` : 'Draw!';
     wl.style.color = winner?.color || '#fff';
+    wl.innerHTML = winner
+        ? `<span class="winner-label">Winner</span><span class="winner-name">${escapeHtml(winner.name)}</span><span class="winner-sub">wins!</span>`
+        : `<span class="winner-name">Draw!</span>`;
+    launchResultFireworks();
     document.getElementById('final-scores').innerHTML = scores
-        .map(p => `<div class="score-row"><span style="color:${p.color}">${p.name}</span><span>${p.pct}%</span></div>`)
+        .map(p => `<div class="score-row"><span style="color:${p.color}">${escapeHtml(p.name)}</span><span>${p.pct}%</span></div>`)
         .join('');
     goEl.style.display = 'flex';
 });
@@ -180,6 +215,8 @@ socket.on('lobby-reset', () => {
     lbEl.innerHTML = '';
     particles = [];
     drips = [];
+    const fw = document.getElementById('fireworks-layer');
+    if (fw) fw.innerHTML = '';
 });
 
 document.getElementById('start-btn')?.addEventListener('click', () => socket.emit('game-start'));
@@ -245,7 +282,7 @@ function updateLeaderboard(board) {
         const el = document.createElement('div');
         el.className = 'lb-row';
         el.dataset.id = p.id;
-        el.innerHTML = `<span class="lb-rank"></span>` + `<span class="lb-swatch" style="background:${p.color}"></span>` + `<span class="lb-name">${p.name}</span>` + `<span class="lb-pct"></span>`;
+        el.innerHTML = `<span class="lb-rank"></span>` + `<span class="lb-swatch" style="background:${p.color}"></span>` + `<span class="lb-name">${escapeHtml(p.name)}</span>` + `<span class="lb-pct"></span>`;
         lbEl.appendChild(el);
         rowMap.set(p.id, el);
     }

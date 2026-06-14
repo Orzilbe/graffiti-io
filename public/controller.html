@@ -84,7 +84,13 @@
     #go-screen    .screen-title { color: #76FF03;   text-shadow: 0 0 24px #76FF03; font-size: 4rem; }
     #death-screen .screen-title { color: #FF6D00;   text-shadow: 0 0 20px #FF6D00; }
     #end-screen   .screen-title { color: #FF6D00; }
-    #end-winner { font-family: 'Boogaloo', sans-serif; font-size: 1.7rem; text-align: center; }
+    #end-winner { font-family: 'Boogaloo', sans-serif; text-align: center; display:flex; flex-direction:column; align-items:center; gap:2px; }
+    #end-winner .winner-label { color:rgba(255,255,255,.45); font-size:.85rem; text-transform:uppercase; letter-spacing:.28em; }
+    #end-winner .winner-name { font-family:'Permanent Marker',cursive; font-size:3.2rem; line-height:1; text-shadow:0 0 18px currentColor; }
+    #end-winner .winner-sub { color:rgba(255,255,255,.65); font-size:1.2rem; }
+    #end-scores { width:min(86vw, 340px); display:flex; flex-direction:column; gap:8px; margin-top:8px; }
+    .end-score-row { display:flex; align-items:center; justify-content:space-between; gap:12px; border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.05); border-radius:14px; padding:9px 12px; font-family:'Boogaloo',sans-serif; font-size:1.05rem; }
+    .end-score-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   </style>
 </head>
 <body>
@@ -143,6 +149,7 @@
   <div id="end-screen" class="screen">
     <div class="screen-title">GAME OVER</div>
     <div id="end-winner"></div>
+    <div id="end-scores"></div>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
