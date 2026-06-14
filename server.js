@@ -192,6 +192,41 @@ function assignPlayerSlot(socket, slotId, payload, reason = 'join') {
     console.log(`[lobby] ${reason}: slot=${slotId} user=${name} color=${color}`);
 }
 
+
+async function fetchPlatformPlayerProfile(userId) {
+    if (!userId || !PLATFORM_URL || !GAME_API_SECRET) return null;
+
+    try {
+        const url = `${PLATFORM_URL}/api/game/player-profile?userId=${encodeURIComponent(userId)}`;
+        const res = await fetch(url, {
+            headers: {'x-api-secret': GAME_API_SECRET},
+        });
+
+        if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            console.log(`[platform] profile fetch skipped for userId=${userId}: ${res.status} ${text}`);
+            return null;
+        }
+
+        return await res.json();
+    } catch (err) {
+        console.log('[platform] profile fetch failed:', err?.message ?? err);
+        return null;
+    }
+}
+
+async function resolveLobbyPayload(payload) {
+    const fresh = await fetchPlatformPlayerProfile(payload.userId);
+    if (!fresh) return payload;
+
+    return {
+        userId: payload.userId,
+        username: fresh.username ?? payload.username,
+        avatarUrl: fresh.avatarUrl ?? payload.avatarUrl ?? null,
+        avatarConfig: fresh.avatarConfig ?? payload.avatarConfig ?? null,
+    };
+}
+
 function updateSocketProfile(socket, payload) {
     const slotId = socket.data?.slotId;
     const userId = socket.data?.userId ?? payload.userId ?? null;
@@ -647,7 +682,10 @@ async function postScoresToPlatform(activePlayers, total) {
     const failed = results.filter(r => r.status === 'rejected');
     console.log(`[platform] scores saved: ${saved}/${withIds.length}`);
     failed.forEach((r, i) => console.log(`[platform] failed[${i}]:`, r.reason));
-    if (saved > 0) io.to([...displays]).emit('scores-saved', {count: saved});
+    if (saved > 0) {
+        io.emit('scores-saved', {count: saved});
+        io.emit('platform-leaderboard-refresh', {count: saved, at: Date.now()});
+    }
 }
 
 function broadcastQueuePositions() {
@@ -722,28 +760,48 @@ io.on('connection', socket => {
         });
     });
 
-    socket.on('lobby-join', ({userId, username, avatarUrl, avatarConfig}) => {
-        const cfg = avatarConfig ?? null;
-        const name = safeName(username, 'Player');
-        const payload = {userId, username: name, avatarUrl: avatarUrl ?? null, avatarConfig: cfg};
+    socket.on('lobby-join', async ({userId, username, avatarUrl, avatarConfig}) => {
+        const initialPayload = {
+            userId: userId ?? null,
+            username: safeName(username, 'Player'),
+            avatarUrl: avatarUrl ?? null,
+            avatarConfig: avatarConfig ?? null,
+        };
+        const payload = await resolveLobbyPayload(initialPayload);
+        const cfg = payload.avatarConfig ?? null;
+        const name = safeName(payload.username, 'Player');
+        payload.username = name;
+        payload.avatarConfig = cfg;
 
         // Rejoining after editing the avatar, refreshing the phone, or reconnecting
         // should update the existing slot instead of creating a duplicate stale player.
-        const existingSlot = findSlotBySocketId(socket.id) ?? findSlotByUserId(userId);
+        const existingSlot = findSlotBySocketId(socket.id) ?? findSlotByUserId(payload.userId);
         if (existingSlot !== null) {
             assignPlayerSlot(socket, existingSlot, payload, 'rejoin/update');
             return;
         }
 
         if (gamePhase !== 'lobby') {
-            if (!waitingQueue.find(p => p.socketId === socket.id || (userId && p.userId === userId))) {
-                waitingQueue.push({socketId: socket.id, userId, username: name, avatarUrl, avatarConfig: cfg});
-                socket.data = {name, userId, avatarUrl, avatarConfig: cfg, inQueue: true};
+            if (!waitingQueue.find(p => p.socketId === socket.id || (payload.userId && p.userId === payload.userId))) {
+                waitingQueue.push({
+                    socketId: socket.id,
+                    userId: payload.userId,
+                    username: name,
+                    avatarUrl: payload.avatarUrl,
+                    avatarConfig: cfg,
+                });
+                socket.data = {
+                    name,
+                    userId: payload.userId,
+                    avatarUrl: payload.avatarUrl,
+                    avatarConfig: cfg,
+                    inQueue: true,
+                };
             } else {
                 updateSocketProfile(socket, payload);
             }
             if (gameRunning) socket.emit('game-in-progress');
-            const pos = waitingQueue.findIndex(p => p.socketId === socket.id || (userId && p.userId === userId)) + 1;
+            const pos = waitingQueue.findIndex(p => p.socketId === socket.id || (payload.userId && p.userId === payload.userId)) + 1;
             socket.emit('queue-position', {position: pos, totalWaiting: waitingQueue.length});
             broadcastQueuePositions();
             return;
@@ -753,13 +811,25 @@ io.on('connection', socket => {
         const slotId = [0, 1, 2, 3].find(i => !usedSlots.has(i));
 
         if (slotId === undefined) {
-            if (!waitingQueue.find(p => p.socketId === socket.id || (userId && p.userId === userId))) {
-                waitingQueue.push({socketId: socket.id, userId, username: name, avatarUrl, avatarConfig: cfg});
-                socket.data = {name, userId, avatarUrl, avatarConfig: cfg, inQueue: true};
+            if (!waitingQueue.find(p => p.socketId === socket.id || (payload.userId && p.userId === payload.userId))) {
+                waitingQueue.push({
+                    socketId: socket.id,
+                    userId: payload.userId,
+                    username: name,
+                    avatarUrl: payload.avatarUrl,
+                    avatarConfig: cfg,
+                });
+                socket.data = {
+                    name,
+                    userId: payload.userId,
+                    avatarUrl: payload.avatarUrl,
+                    avatarConfig: cfg,
+                    inQueue: true,
+                };
             } else {
                 updateSocketProfile(socket, payload);
             }
-            const pos = waitingQueue.findIndex(p => p.socketId === socket.id || (userId && p.userId === userId)) + 1;
+            const pos = waitingQueue.findIndex(p => p.socketId === socket.id || (payload.userId && p.userId === payload.userId)) + 1;
             socket.emit('queue-position', {position: pos, totalWaiting: waitingQueue.length});
             broadcastQueuePositions();
             return;
@@ -768,9 +838,17 @@ io.on('connection', socket => {
         assignPlayerSlot(socket, slotId, payload, 'join');
     });
 
-    socket.on('lobby-profile-update', ({userId, username, avatarUrl, avatarConfig}) => {
+    socket.on('lobby-profile-update', async ({userId, username, avatarUrl, avatarConfig}) => {
         if (socket.data?.userId && userId && socket.data.userId !== userId) return;
-        updateSocketProfile(socket, {userId, username, avatarUrl, avatarConfig});
+
+        const payload = await resolveLobbyPayload({
+            userId: userId ?? socket.data?.userId ?? null,
+            username: safeName(username ?? socket.data?.name, 'Player'),
+            avatarUrl: avatarUrl ?? socket.data?.avatarUrl ?? null,
+            avatarConfig: avatarConfig ?? socket.data?.avatarConfig ?? null,
+        });
+
+        updateSocketProfile(socket, payload);
     });
 
 
